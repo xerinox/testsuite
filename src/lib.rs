@@ -20,6 +20,9 @@ pub struct Arguments {
     /// Response content
     #[arg(short, long, conflicts_with = "content_file")]
     pub content: Option<String>,
+
+    #[arg(short, long, default_value_t = String::from("/"))]
+    pub endpoint: String
 }
 
 #[derive(clap::ValueEnum, Clone, Default, Debug, Serialize)]
@@ -49,6 +52,7 @@ impl FromStr for ResponseFormat {
 pub struct Response {
     pub content: Option<String>,
     pub format: ResponseFormat,
+    pub endpoint: String
 }
 
 impl ToString for Response {
@@ -76,34 +80,47 @@ impl ToString for Response {
 }
 
 impl Response {
-    pub fn from_content(content: &str, response_format: &ResponseFormat) -> Response {
+    pub fn from_content(content: &str, endpoint: &str, response_format: &ResponseFormat) -> Response {
         Response {
             content: Some(String::from(content)),
             format: response_format.clone(),
+            endpoint: String::from(endpoint)
         }
     }
+
     pub fn from_content_file(path: &PathBuf, response_format: &ResponseFormat) -> Response {
         Response {
             content: match path.exists() {
                 true => Some(fs::read_to_string(path).expect("File is unreadable")),
-                false => None,
+                false => {
+                    println!("Could not find file: {:}, continuing with blank response", path.to_str().expect("Path is unparseable"));
+                    None
+                },
             },
             format: response_format.clone(),
+            endpoint: match path.file_stem() {
+                Some(path) => {
+                    let mut endpoint: String = String::from("/");
+                        endpoint.push_str(&path.to_string_lossy());
+                        endpoint
+                    
+                },
+                None => String::from("/")
+            },
         }
     }
 
     pub fn from_args(args: &Arguments) -> Response {
-        let content = &args.content;
-        let content_file = &args.content_file;
         let response_format = &args.format;
-        if let Some(content) = content {
-            return Response::from_content(content, response_format)
-        } else if let Some(p) = content_file {
+        if let Some(content) = &args.content {
+            return Response::from_content(content, &args.endpoint, response_format)
+        } else if let Some(p) = &args.content_file {
             return Response::from_content_file(p, response_format) 
         } else {
             return Response {
                 content: None,
-                format: response_format.clone()
+                format: response_format.clone(),
+                endpoint: String::from("/")
             }
         }
     }
