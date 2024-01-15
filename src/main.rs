@@ -25,12 +25,9 @@ fn main() {
 }
 
 fn handle_connection(mut stream: TcpStream, response: &Response) {
-    //let mut buffer = [0; 1024];
     let mut line = vec![];
-    //stream.read(&mut buffer).unwrap();
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     if reader.read_until(b'\n', &mut line).unwrap() > 0 {
-        
         let string_line= String::from_utf8(line).expect("error in stream read");
         let path = string_line.trim_start_matches("GET ").trim_start_matches("POST ").trim_end_matches(" HTTP/1.1\r\n");
         if path == response.endpoint {
@@ -38,9 +35,7 @@ fn handle_connection(mut stream: TcpStream, response: &Response) {
             println!("Matched path: {}, responded with: {:?}", path, response.to_string());
         } else {
             println!("Unmatched path: {}, expected: {}", path, response.endpoint);
-            
         }
-
     }
     stream.flush().unwrap();
 }
