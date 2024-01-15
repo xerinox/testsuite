@@ -1,10 +1,12 @@
 use clap::Parser;
+#[cfg(feature="multithreaded")]
+mod multithreaded;
 use std::io::prelude::*;
 use std::io::BufReader;
 use std::net::TcpListener;
 use std::net::TcpStream;
 #[cfg(feature = "multithreaded")]
-use testsuite::ThreadPool;
+use crate::multithreaded::multithreaded::ThreadPool;
 use testsuite::{Arguments, Response};
 
 fn main() {
