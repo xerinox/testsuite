@@ -1,73 +1,16 @@
-use std::fs;
 use std::io::prelude::*;
-use std::path::PathBuf;
 use clap::Parser;
-use testsuite::{ResponseFormat, Response};
-use std::net::TcpStream;
 use std::net::TcpListener;
+use std::net::TcpStream;
+use testsuite::{Response, Arguments};
 
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    /// Port to run on
-    #[arg(short, long, default_value_t = 8080)]
-    port: u16,
-
-    /// Response format
-    #[arg(short, long, default_value_t, value_enum)]
-    format: ResponseFormat,
-
-    /// Response content file
-    #[arg(short='C', long, conflicts_with = "content")]
-    content_file: Option<PathBuf>,
-
-    /// Response content
-    #[arg(short, long, conflicts_with = "content_file")]
-    content: Option<String>
-}
 
 fn main() {
-    let args = Args::parse();
+    let args = Arguments::parse();
     let port = args.port;
-    let format = args.format;
-    let content_file = match args.content_file {
-        Some(path) => {
-            match path.exists() {
-                true => {
-                   Some(fs::read_to_string(path).expect("File is unreadable"))
-                },
-                false => {
-                    println!("File does not exist: {:?}", path);
-                    None
-                }
-            }
-        },
-        None => {
-            None
-        }
-    };
-
-    let content = match args.content {
-        Some(content) => {
-            content
-        },
-        None => {
-            match content_file {
-                Some(content) => {
-                    content
-                },
-                None => {
-                    String::new()
-                }
-            }
-        }
-    };
+    let response = Response::from_args(&args);
 
     const HOST: &str = "127.0.0.1";
-    let response = Response {
-        content,
-        format: format.clone()
-    };
 
     let end_point: String = HOST.to_owned() + ":" + &port.to_string();
     println!("endpoint:{:?}", end_point);
