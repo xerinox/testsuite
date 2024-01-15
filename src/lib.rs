@@ -1,10 +1,6 @@
-use clap::Parser;
+use clap::{Args, Parser};
 use serde::Serialize;
-use std::{
-    fs,
-    path::PathBuf,
-    str::FromStr,
-};
+use std::{collections::HashMap, fs, path::PathBuf, str::FromStr};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -13,25 +9,35 @@ pub struct Arguments {
     #[arg(short, long, default_value_t = 8080)]
     pub port: u16,
 
+    #[command(flatten)]
+    pub content: Content,
+
     /// Response format
     #[arg(short, long, default_value_t, value_enum)]
     pub format: ResponseFormat,
 
-    /// Response content file
-    #[arg(short = 'C', long, conflicts_with = "content")]
-    pub content_file: Option<PathBuf>,
-
-    /// Response content
-    #[arg(short, long, conflicts_with = "content_file")]
-    pub content: Option<String>,
-
     #[arg(short, long, default_value_t = String::from("/"))]
     pub endpoint: String,
 
-    #[cfg(feature="multithreaded")]
+    #[cfg(feature = "multithreaded")]
     #[arg(short, long, default_value_t = 1)]
-    #[cfg(feature="multithreaded")]
+    #[cfg(feature = "multithreaded")]
     pub threads: usize,
+}
+
+#[derive(Args, Debug)]
+#[group(multiple = false)]
+pub struct Content {
+    /// Response content
+    #[arg(short, long)]
+    pub content: Option<String>,
+
+    /// Response content file
+    #[arg(long)]
+    pub content_file: Option<PathBuf>,
+
+    #[arg(long)]
+    pub content_folder: Option<PathBuf>,
 }
 
 #[derive(clap::ValueEnum, Clone, Default, Debug, Serialize)]
@@ -61,7 +67,6 @@ impl FromStr for ResponseFormat {
 pub struct Response {
     pub content: Option<String>,
     pub format: ResponseFormat,
-    pub endpoint: String,
 }
 
 impl ToString for Response {
@@ -88,18 +93,14 @@ impl ToString for Response {
         response
     }
 }
-
+#[derive(Debug)]
+pub struct FolderError {}
 impl Response {
     /// Creates a response from text content, endpoint, and format
-    pub fn from_content(
-        content: &str,
-        endpoint: &str,
-        response_format: &ResponseFormat,
-    ) -> Response {
+    pub fn from_content(content: &str, response_format: &ResponseFormat) -> Response {
         Response {
             content: Some(String::from(content)),
             format: response_format.clone(),
-            endpoint: String::from(endpoint),
         }
     }
 
@@ -117,31 +118,65 @@ impl Response {
                 }
             },
             format: response_format.clone(),
-            endpoint: match path.file_stem() {
-                Some(path) => {
-                    let mut endpoint: String = String::from("/");
-                    endpoint.push_str(&path.to_string_lossy());
-                    endpoint
-                }
-                None => String::from("/"),
-            },
         }
     }
 
     /// Creates a response from Argument object
     pub fn from_args(args: &Arguments) -> Response {
         let response_format = &args.format;
-        if let Some(content) = &args.content {
-            return Response::from_content(content, &args.endpoint, response_format);
-        } else if let Some(p) = &args.content_file {
+        if let Some(content) = &args.content.content {
+            return Response::from_content(content, response_format);
+        } else if let Some(p) = &args.content.content_file {
             return Response::from_content_file(p, response_format);
         } else {
             return Response {
                 content: None,
                 format: response_format.clone(),
-                endpoint: String::from("/"),
             };
         }
     }
-}
 
+    pub fn from_folder(
+        path: &PathBuf,
+        response_format: &ResponseFormat,
+    ) -> Result<HashMap<String, Response>, FolderError> {
+        if path.exists() {
+            if path.is_dir() {
+                let mut map: HashMap<String, Response> = HashMap::new();
+                let paths = fs::read_dir(path).map_err(|_| FolderError {})?;
+                for path in paths {
+                    if let Ok(file) = path {
+                        if !file.path().is_dir() {
+                            if let Some(ext) = file.path().extension() {
+                                if ext == "json" || ext == "html" {
+                                    if let Some(stem) = file.path().file_stem() {
+                                        println!(
+                                            "Adding content of {} to endpoint: {}",
+                                            file.path().to_str().unwrap(),
+                                            stem.to_str().unwrap()
+                                        );
+                                        let mut endpoint = String::from("/");
+                                        endpoint.push_str(stem.to_str().unwrap());
+                                        map.insert(
+                                            endpoint,
+                                            Response::from_content_file(
+                                                &file.path(),
+                                                response_format,
+                                            ),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                return Ok(map);
+            } else {
+                return Err(FolderError {});
+            }
+        } else {
+            return Err(FolderError {});
+        }
+    }
+}
