@@ -1,8 +1,9 @@
 use clap::Parser;
-#[cfg(feature="multithreaded")]
+#[cfg(feature = "multithreaded")]
 mod multithreaded;
 #[cfg(feature = "multithreaded")]
 use crate::multithreaded::multithreaded::ThreadPool;
+use anyhow::Result;
 
 use std::collections::HashMap;
 use std::io::prelude::*;
@@ -12,16 +13,19 @@ use std::net::TcpStream;
 use std::sync::Arc;
 use testsuite::{Arguments, Response};
 
-
-fn main() {
-    let args = Arguments::parse();
-    let port = args.port;
-    let mut map : HashMap<String, Response> = HashMap::new();
-    let (content, content_file, content_folder) = (&args.content.content, &args.content.content_file, &args.content.content_folder); 
+fn populate_map(args: &Arguments, map: &mut HashMap<String, Response>) {
+    let (content, content_file, content_folder) = (
+        &args.content.content,
+        &args.content.content_file,
+        &args.content.content_folder,
+    );
     match (content, content_file, content_folder) {
         (Some(content), None, None) => {
-            map.insert(args.endpoint.clone(), Response::from_content(&content, &args.format));
-        },
+            map.insert(
+                args.endpoint.clone(),
+                Response::from_content(&content, &args.format),
+            );
+        }
         (None, Some(content_file), None) => {
             let endpoint = match content_file.file_stem() {
                 Some(path) => {
@@ -41,6 +45,14 @@ fn main() {
             map.insert(String::from("/"), Response::default());
         }
     }
+}
+
+fn main() -> Result<()> {
+    let args = Arguments::parse();
+    let port = args.port;
+    let mut map: HashMap<String, Response> = HashMap::new();
+
+    populate_map(&args, &mut map);
 
     const HOST: &str = "127.0.0.1";
 
@@ -55,26 +67,29 @@ fn main() {
         match &pool {
             Ok(pool) => {
                 for stream in listener.incoming() {
-                    let _stream = stream.unwrap();
-                    let mapref = Arc::clone(&map_ref);
-                    pool.execute(move|| {
-                        handle_connection(_stream, &mapref);
-                    });
+                    parse_stream(stream, Arc::clone(&map_ref), pool)?;
                 }
+                Ok(())
             }
             Err(_) => {
                 println!("Could not initalize pool, running single threaded");
                 for stream in listener.incoming() {
-                    let _stream = stream.unwrap();
-                    handle_connection(_stream, &map_ref);
+                    let _stream = stream?;
+                    if let Err(err) = handle_connection(_stream, &map_ref){
+                        println!("Error: {:?}", err);
+                    }
                 }
+                return Ok(())
             }
         }
     } else {
         for stream in listener.incoming() {
-            let _stream = stream.unwrap();
-            handle_connection(_stream, &map_ref);
+            let _stream = stream?;
+            if let Err(err) = handle_connection(_stream, &map_ref) {
+                println!("Error: {:?}", err);
+            }
         }
+        Ok(())
     }
     #[cfg(not(feature = "multithreaded"))]
     for stream in listener.incoming() {
@@ -83,22 +98,48 @@ fn main() {
     }
 }
 
-fn handle_connection(mut stream: TcpStream, map: &Arc<HashMap<String, Response>>) {
+fn parse_stream(
+    stream: Result<TcpStream, std::io::Error>,
+    map_ref: Arc<HashMap<String, Response>>,
+    pool: &ThreadPool,
+) -> Result<()>{
+    let _stream = stream?;
+    pool.execute(move ||{
+        if let Err(err) = handle_connection(_stream, &map_ref){
+            println!("Error: {:?}", err);
+        }
+    });
+    Ok(())
+}
+
+fn handle_connection(mut stream: TcpStream, map: &Arc<HashMap<String, Response>>)->Result<()> {
     let buf_reader = BufReader::new(&mut stream);
     let http_request: Vec<_> = buf_reader
         .lines()
-        .map(|result| result.unwrap())
-        .take_while(|line| !line.is_empty())
+        .map(|result|{
+            if result.is_err() {
+                return String::from("")
+            } else {
+                result.unwrap()
+            }
+        })
+        .take_while(|line| {line.is_empty() })
         .collect();
 
-    let string_line = http_request.first().unwrap();
+
+    let string_line = match http_request.first(){
+        Some(line) => line,
+        None => ""
+    };
+
     let path = string_line
         .trim_start_matches("GET ")
         .trim_start_matches("POST ")
         .trim_end_matches(" HTTP/1.1");
 
     if map.get(path).is_some() {
-        stream.write(&map.get(path).unwrap().to_string().as_bytes()).unwrap();
+        stream
+            .write(&map.get(path).unwrap().to_string().as_bytes())?;
         println!(
             "Matched path: {}, responded with: {:?}",
             path,
@@ -108,7 +149,8 @@ fn handle_connection(mut stream: TcpStream, map: &Arc<HashMap<String, Response>>
         println!("Unmatched path: {}:", path);
         stream
             .write("HTTP/1.1 404 Not Found\r\n\r\nNot found".as_bytes())
-            .unwrap();
+            ?;
     }
-    stream.flush().unwrap();
+    stream.flush()?;
+    Ok(())
 }
