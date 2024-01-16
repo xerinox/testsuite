@@ -5,17 +5,29 @@ Rust cli test server with configurable responses
 Usage: testsuite [OPTIONS]
 
 Options:
-  -p, --port <PORT>                  Port to run on [default: 8080]
-  -f, --format <FORMAT>              Response format [default: json] [possible values: json, html]
-  -C, --content-file <CONTENT_FILE>  Response content file
-  -c, --content <CONTENT>            Response content
-  -e, --endpoint <ENDPOINT>          [default: /]
-  -h, --help                         Print help
-  -V, --version                      Print version
+  -p, --port <PORT>
+          Port to run on [default: 8080]
+  -c, --content <CONTENT>
+          Response content
+      --content-file <CONTENT_FILE>
+          Response content file
+      --content-folder <CONTENT_FOLDER>
+          Response content folder (All json/html files will be endpoints with file name as path)
+
+  -f, --format <FORMAT>
+          Response format [default: json] [possible values: json, html]
+  -e, --endpoint <ENDPOINT>
+          [default: /]
+  -t, --threads <THREADS>
+          [default: 1]
+  -h, --help
+          Print help
+  -V, --version
+          Print version
 ```
 
-# examples:
-## Json file:
+## examples:
+### Json file:
 
 Create a json file: <path>/example.json
 ```json
@@ -24,8 +36,11 @@ Create a json file: <path>/example.json
 }
 ```
 
-executing `testsuite -C="<path>/example.json"` will start up a server on 127.0.0.1:8080, listening for incoming requests to the endpoint /example, and return a http response with the json data
+executing `testsuite --content-file="<path>/example.json"` will start up a server on 127.0.0.1:8080, listening for incoming requests to the endpoint /example, and return a http response with the json data
 
 
-## Text json response and setting endpoint
+### Text json response and setting endpoint
 executing `testsuite -c="{ \"id\": 1 }" -e="/id"` will start up the server on 127.0.0.1:8080, listening for requests on /id, and returning http response with the json data.
+
+### Several endpoints: 
+`testsuite --content-folder="<path>/"` will start up a server on 127.0.0.1:8080, and each html/json file in the folder will be an endpoint with their file name(without extension) as the endpoint address
