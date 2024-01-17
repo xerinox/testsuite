@@ -180,3 +180,43 @@ impl Response {
         }
     }
 }
+
+pub fn populate_map(args: &Arguments) -> HashMap<String, Response> {
+    let mut map: HashMap<String, Response> = HashMap::new();
+    let (content, content_file, content_folder) = (
+        &args.content.content,
+        &args.content.content_file,
+        &args.content.content_folder,
+    );
+    match (content, content_file, content_folder) {
+        (Some(content), None, None) => {
+            map.insert(
+                args.endpoint.clone(),
+                Response::from_content(&content, &args.format),
+            );
+        }
+        (None, Some(content_file), None) => {
+            let endpoint = match content_file.file_stem() {
+                Some(path) => {
+                    let mut endpoint: String = String::from("/");
+                    endpoint.push_str(&path.to_string_lossy());
+                    endpoint
+                }
+                None => String::from("/"),
+            };
+            map.insert(endpoint, Response::from_args(&args));
+        }
+        (None, None, Some(content_folder)) => {
+            match Response::from_folder(&content_folder, &args.format) {
+                Ok(map_b) => map.extend(map_b),
+                Err(e) => {
+                    println!("Error while parsing content folder: {:?}", e);
+                }
+            }
+        }
+        _ => {
+            map.insert(String::from("/"), Response::default());
+        }
+    }
+    map
+}

@@ -1,88 +1,57 @@
-#[cfg(feature="multithreaded")]
-pub mod multithreaded {
-    use std::sync::{mpsc, Arc, Mutex};
-    use std::thread;
+use crate::Response;
+use anyhow::Result;
+use std::{collections::HashMap, io, sync::Arc};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter},
+    net::{
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+        TcpStream,
+    },
+};
 
-    type Job = Box<dyn FnOnce() + Send + 'static>;
+pub struct MultiBufTcpStream {
+    pub input: BufWriter<OwnedWriteHalf>,
+    pub output: BufReader<OwnedReadHalf>,
+}
 
-    pub struct PoolCreationError {}
-
-    pub struct ThreadPool {
-        workers: Vec<Worker>,
-        sender: Option<mpsc::Sender<Job>>,
+impl MultiBufTcpStream {
+    pub fn new(stream: TcpStream) -> io::Result<Self> {
+        let (read, write) = stream.into_split();
+        let input = BufWriter::new(write);
+        let output = BufReader::new(read);
+        Ok(MultiBufTcpStream { input, output })
     }
+}
 
+pub async fn handle_connection_async(
+    mut streams: MultiBufTcpStream,
+    map: &Arc<HashMap<String, Response>>,
+) -> Result<()> {
+    let mut output = BufReader::new(streams.output);
+    let mut line = String::new();
+    output.read_line(&mut line).await?;
 
-    impl ThreadPool {
-        /// Builds a thread pool
-        ///
-        /// size is how many threads to spawn
-        pub fn build(size: usize) -> Result<ThreadPool, PoolCreationError> {
-            if size < 1 {
-                Err(PoolCreationError {})
-            } else {
-                let (sender, receiver) = mpsc::channel();
-                let receiver = Arc::new(Mutex::new(receiver));
-                let mut workers = Vec::with_capacity(size);
-                for id in 0..size {
-                    workers.push(Worker::new(id, Arc::clone(&receiver)));
-                }
-                Ok(ThreadPool {
-                    workers,
-                    sender: Some(sender),
-                })
-            }
+    let path = line
+        .trim_start_matches("GET ")
+        .trim_start_matches("POST ")
+        .trim_end_matches(" HTTP/1.1\r\n");
+    let mut stream = BufWriter::new(&mut streams.input);
+
+    if map.get(path).is_some() {
+        if let Some(matched_path) = map.get(path) {
+            stream.write(matched_path.to_string().as_bytes()).await?;
+            println!(
+                "Matched path: {}, responded with: {:?}",
+                path,
+                matched_path.to_string()
+            );
         }
-        /// Executes a job
-        pub fn execute<F>(&self, f: F)
-        where
-            F: FnOnce() + Send + 'static,
-        {
-            let job = Box::new(f);
-
-            self.sender.as_ref().unwrap().send(job).unwrap();
-        }
+    } else {
+        println!("Unmatched path: {}:", path);
+        stream
+            .write("HTTP/1.1 404 Not Found\r\n\r\nNot found".as_bytes())
+            .await?;
     }
-
-    #[cfg(feature = "multithreaded")]
-    impl Drop for ThreadPool {
-        fn drop(&mut self) {
-            drop(self.sender.take());
-            for worker in &mut self.workers {
-                println!("Shutting down worker {}", worker.id);
-                if let Some(thread) = worker.thread.take() {
-                    thread.join().unwrap();
-                }
-            }
-        }
-    }
-
-    #[cfg(feature = "multithreaded")]
-    struct Worker {
-        id: usize,
-        thread: Option<thread::JoinHandle<()>>,
-    }
-
-    #[cfg(feature = "multithreaded")]
-    impl Worker {
-        fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Worker {
-            let thread = thread::spawn(move || loop {
-                let message = receiver.lock().unwrap().recv();
-                match message {
-                    Ok(job) => {
-                        println!("Worker {id} got a job; executing.");
-                        job();
-                    }
-                    Err(_) => {
-                        println!("Worker {id} disconnected; shutting down.");
-                        break;
-                    }
-                }
-            });
-            Worker {
-                id,
-                thread: Some(thread),
-            }
-        }
-    }
+    stream.flush().await?;
+    Ok(())
 }

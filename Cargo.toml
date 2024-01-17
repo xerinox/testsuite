@@ -17,3 +17,4 @@ multithreaded = []
 anyhow = "1.0.79"
 clap = {version = "4.4.16", features = ["derive"]}
 serde = {version = "1.0", features = ["derive"]}
+tokio = {version = "1.35.1", features = ["full"]}
