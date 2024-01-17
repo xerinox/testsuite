@@ -18,6 +18,8 @@ Options:
           Response format [default: json] [possible values: json, html]
   -e, --endpoint <ENDPOINT>
           [default: /]
+  -a, --allow-remote
+        Allows remote connections to the server
   -h, --help
           Print help
   -V, --version
