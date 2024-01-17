@@ -18,11 +18,6 @@ pub struct Arguments {
 
     #[arg(short, long, default_value_t = String::from("/"))]
     pub endpoint: String,
-
-    #[cfg(feature = "multithreaded")]
-    #[arg(short, long, default_value_t = 1)]
-    #[cfg(feature = "multithreaded")]
-    pub threads: usize,
 }
 
 #[derive(Args, Debug)]
