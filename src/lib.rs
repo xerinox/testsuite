@@ -1,6 +1,6 @@
 use clap::{Args, Parser};
 use serde::Serialize;
-use std::{collections::HashMap, fs, path::PathBuf, str::FromStr};
+use std::{collections::HashMap, error::Error, fmt::Display, fs, path::PathBuf, str::FromStr};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -93,8 +93,16 @@ impl ToString for Response {
         response
     }
 }
-#[derive(Debug)]
-pub struct FolderError {}
+#[derive(Debug, PartialEq, Clone)]
+pub struct FolderError {
+    error: String,
+}
+impl Display for FolderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Ok(write!(f, "{:?}", self.error))?
+    }
+}
+impl Error for FolderError {}
 impl Response {
     /// Creates a response from text content, endpoint, and format
     pub fn from_content(content: &str, response_format: &ResponseFormat) -> Response {
@@ -138,45 +146,73 @@ impl Response {
 
     pub fn from_folder(
         path: &PathBuf,
-        response_format: &ResponseFormat,
     ) -> Result<HashMap<String, Response>, FolderError> {
         if path.exists() {
             if path.is_dir() {
-                let mut map: HashMap<String, Response> = HashMap::new();
-                let paths = fs::read_dir(path).map_err(|_| FolderError {})?;
-                for path in paths {
-                    if let Ok(file) = path {
-                        if !file.path().is_dir() {
-                            if let Some(ext) = file.path().extension() {
-                                if ext == "json" || ext == "html" {
-                                    if let Some(stem) = file.path().file_stem() {
-                                        println!(
-                                            "Adding content of {} to endpoint: {}",
-                                            file.path().to_str().unwrap(),
-                                            stem.to_str().unwrap()
-                                        );
-                                        let mut endpoint = String::from("/");
-                                        endpoint.push_str(stem.to_str().unwrap());
-                                        map.insert(
-                                            endpoint,
-                                            Response::from_content_file(
-                                                &file.path(),
-                                                response_format,
-                                            ),
-                                        );
-                                    }
-                                }
+                let paths = fs::read_dir(path).map_err(|e| FolderError {
+                    error: format!("{}", e.to_string()),
+                })?;
+                let map:HashMap<String, Response> = paths
+                    .filter_map(|file| match file {
+                        Ok(some) => {
+                            Some(some)
+                        },
+                        Err(e) => {
+                            println!("Error: could not read directory: {:?}", e);
+                            None
+                        }
+                    }).filter_map(|file| {
+                        match file.path().is_dir() {
+                            true => None,
+                            false => {
+                                Some(file)
                             }
                         }
-                    }
-                }
+                    })
+                    .filter_map(|file| {
+                        if let Some(ext) = file.path().extension() {
+                            match (ext.to_str(), file.path().file_stem()) {
+                                (Some("json"), Some(_)) => {
+                                   Some((ResponseFormat::Json, file.path()))
+                                },
+                                (Some("html"), Some(_)) => {
+                                    Some((ResponseFormat::Html, file.path()))
+                                },
+                                (_, Some(_)) => {
+                                    println!("File: {} does not have a valid extension [html, json]", file.path().to_str()?);
+                                    None
+                                },
+                                (Some(_), None) => {
+                                    println!("File: {} does not have a file name for use in endpoint generation", file.path().to_str()?);
+                                    None
+                                },
+                                _ => {
+                                    None
+                                }
+                            }
+                        } else {
+                            println!("File: {} does not have an extension, valid extensions are [html, json]", file.path().to_str()?);
+                            None
+                        }
+
+                    })
+                    .map(|(format, stem)| {
+                        let mut endpoint = String::from("/");
+                        endpoint.push_str(stem.file_stem().unwrap().to_str().unwrap());
+                        (endpoint, 
+                            Response::from_content_file(
+                                &stem,
+                                &format,
+                            ))
+                    })
+                    .collect();
 
                 return Ok(map);
             } else {
-                return Err(FolderError {});
+                return Err(FolderError {error: "Path is not a directory".to_string()});
             }
         } else {
-            return Err(FolderError {});
+            return Err(FolderError {error: "Path does not exists".to_string()});
         }
     }
 }
@@ -204,11 +240,14 @@ pub fn populate_map(args: &Arguments) -> HashMap<String, Response> {
                 }
                 None => String::from("/"),
             };
-            map.insert(endpoint, Response::from_args(&args));
+            map.insert(endpoint, Response::from_content_file(&content_file, &args.format));
         }
         (None, None, Some(content_folder)) => {
-            match Response::from_folder(&content_folder, &args.format) {
-                Ok(map_b) => map.extend(map_b),
+            match Response::from_folder(&content_folder) {
+                Ok(map_b) => {
+                    println!("Valid endpoints: {:?}", map_b.keys().collect::<Vec<_>>());
+                    map.extend(map_b)
+                }
                 Err(e) => {
                     println!("Error while parsing content folder: {:?}", e);
                 }

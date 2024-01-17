@@ -1,10 +1,10 @@
-use std::{net::TcpStream, collections::HashMap};
+use std::{collections::HashMap, net::TcpStream};
 
 use crate::Response;
 
-use std::io::{BufReader, BufWriter, Result, Write, BufRead};
+use std::io::{BufRead, BufReader, BufWriter, Result, Write};
 pub struct SingleBufTcpStream {
-   pub input: BufWriter<TcpStream>,
+    pub input: BufWriter<TcpStream>,
     pub output: BufReader<TcpStream>,
 }
 
@@ -12,11 +12,7 @@ impl SingleBufTcpStream {
     pub fn new(stream: &TcpStream) -> Result<Self> {
         let input = BufWriter::new(stream.try_clone()?);
         let output = BufReader::new(stream.try_clone()?);
-        Ok(SingleBufTcpStream {
-            input,
-            output,
-        })
-
+        Ok(SingleBufTcpStream { input, output })
     }
 }
 
@@ -51,7 +47,11 @@ pub fn handle_connection(
             );
         }
     } else {
-        streams.input.flush()?;
+        streams
+            .input
+            .write("HTTP/1.0 404 Not Found\r\n\r\nNot found".as_bytes())?;
+        println!("Unmatched path: {}", path);
     }
+    streams.input.flush()?;
     Ok(())
 }
