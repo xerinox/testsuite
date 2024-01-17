@@ -23,12 +23,8 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let map = populate_map(&args);
     let host = match &args.allow_remote {
-        true => {
-            "0.0.0.0"
-        },
-        false => {
-            "127.0.0.1"
-        }
+        true => "0.0.0.0",
+        false => "127.0.0.1",
     };
 
     let map_ref = Arc::from(map.clone());
@@ -65,12 +61,8 @@ fn main() -> Result<()> {
     let map = populate_map(&args);
 
     let host = match &args.allow_remote {
-        true => {
-            "0.0.0.0"
-        },
-        false => {
-            "127.0.0.1"
-        }
+        true => "0.0.0.0",
+        false => "127.0.0.1",
     };
     let end_point: String = host.to_owned() + ":" + &port.to_string();
     let listener = std::net::TcpListener::bind(&end_point)?;
