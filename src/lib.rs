@@ -18,6 +18,9 @@ pub struct Arguments {
 
     #[arg(short, long, default_value_t = String::from("/"))]
     pub endpoint: String,
+
+    #[arg(short, long, default_value_t = false)]
+    pub allow_remote: bool
 }
 
 #[derive(Args, Debug)]

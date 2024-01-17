@@ -22,17 +22,23 @@ async fn main() -> Result<(), anyhow::Error> {
     let port = args.port;
 
     let map = populate_map(&args);
-
-    const HOST: &str = "127.0.0.1";
+    let host = match &args.allow_remote {
+        true => {
+            "0.0.0.0"
+        },
+        false => {
+            "127.0.0.1"
+        }
+    };
 
     let map_ref = Arc::from(map.clone());
 
-    let end_point: String = HOST.to_owned() + ":" + &port.to_string();
+    let end_point: String = host.to_owned() + ":" + &port.to_string();
     #[cfg(feature = "multithreaded")]
     {
         let listener = tokio::net::TcpListener::bind(&end_point).await?;
         println!(
-            "Server running on:{:} with the following endpoints: {:?}",
+            "Server listening on:{:} with the following endpoints: {:?}",
             end_point,
             map.keys().collect::<Vec<_>>()
         );
@@ -58,12 +64,18 @@ fn main() -> Result<()> {
 
     let map = populate_map(&args);
 
-    const HOST: &str = "127.0.0.1";
-
-    let end_point: String = HOST.to_owned() + ":" + &port.to_string();
+    let host = match &args.allow_remote {
+        true => {
+            "0.0.0.0"
+        },
+        false => {
+            "127.0.0.1"
+        }
+    };
+    let end_point: String = host.to_owned() + ":" + &port.to_string();
     let listener = std::net::TcpListener::bind(&end_point)?;
     println!(
-        "Server running on:{:}{:} with the following endpoints: {:?}",
+        "Server listening on:{:}{:} with the following endpoints: {:?}",
         end_point,
         &args.endpoint,
         map.keys().collect::<Vec<_>>()
