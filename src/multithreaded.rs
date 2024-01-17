@@ -1,8 +1,10 @@
 use crate::Response;
 use anyhow::Result;
+use nanohttp::{Method, Request as HttpRequest, Response as HttpResponse, Status};
+use std::str::from_utf8;
 use std::{collections::HashMap, io, sync::Arc};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter},
+    io::{AsyncWriteExt, AsyncReadExt, BufWriter},
     net::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpStream,
@@ -11,15 +13,48 @@ use tokio::{
 
 pub struct MultiBufTcpStream {
     pub input: BufWriter<OwnedWriteHalf>,
-    pub output: BufReader<OwnedReadHalf>,
+    pub output: OwnedReadHalf,
 }
 
 impl MultiBufTcpStream {
     pub fn new(stream: TcpStream) -> io::Result<Self> {
         let (read, write) = stream.into_split();
         let input = BufWriter::new(write);
-        let output = BufReader::new(read);
-        Ok(MultiBufTcpStream { input, output })
+        Ok(MultiBufTcpStream {
+            input,
+            output: read,
+        })
+    }
+}
+
+async fn handle(req: HttpRequest, map: &Arc<HashMap<String, Response>>) -> HttpResponse {
+    match req.method {
+        Method::GET => {
+            if let Some(data) = map.get(req.path.uri.as_str()) {
+                let format = data.format.to_string();
+                if let Some(content) = &data.content {
+                    println!("GET {}, response: {:?}", &req.path.uri.as_str(), content);
+                    HttpResponse::content(&content, &format).status(Status::Ok)
+                } else {
+                    println!("GET {}, response empty", &req.path.uri.as_str());
+                    HttpResponse::empty().status(Status::Ok)
+                }
+            } else {
+                println!("GET {}, 404", &req.path.uri.as_str());
+                HttpResponse::empty().status(Status::NotFound)
+            }
+        }
+        Method::POST => {
+            if let Some(data) = map.get(req.path.uri.as_str()) {
+                let format = data.format.to_string();
+                println!("Post {}, response: {:?}", &req.path.uri.as_str(), &req.body);
+                HttpResponse::content(&req.body, &format).status(Status::Ok) 
+            } else {
+                println!("Post {}, 404", &req.path.uri.as_str());
+                HttpResponse::empty().status(Status::NotFound)
+            }
+        }
+        _ => HttpResponse::empty().status(Status::NotAllowed),
     }
 }
 
@@ -27,31 +62,16 @@ pub async fn handle_connection_async(
     mut streams: MultiBufTcpStream,
     map: &Arc<HashMap<String, Response>>,
 ) -> Result<()> {
-    let mut output = BufReader::new(streams.output);
-    let mut line = String::new();
-    output.read_line(&mut line).await?;
+    let mut buffer = [0; 1024];
+    streams.output.read(&mut buffer).await?;
+    let req_text = from_utf8(&buffer).unwrap().trim_end_matches("\0");
+    let req = HttpRequest::from_string(req_text).unwrap();
+    let res = handle(req, map).await.to_string();
 
-    let path = line
-        .trim_start_matches("GET ")
-        .trim_start_matches("POST ")
-        .trim_end_matches(" HTTP/1.1\r\n");
     let mut stream = BufWriter::new(&mut streams.input);
+    let bytes = res.as_bytes();
 
-    if map.get(path).is_some() {
-        if let Some(matched_path) = map.get(path) {
-            stream.write(matched_path.to_string().as_bytes()).await?;
-            println!(
-                "Matched path: {}, responded with: {:?}",
-                path,
-                matched_path.to_string()
-            );
-        }
-    } else {
-        println!("Unmatched path: {}:", path);
-        stream
-            .write("HTTP/1.1 404 Not Found\r\n\r\nNot found".as_bytes())
-            .await?;
-    }
+    stream.write(bytes).await?;
     stream.flush().await?;
     Ok(())
 }

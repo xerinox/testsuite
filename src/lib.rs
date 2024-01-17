@@ -45,6 +45,19 @@ pub enum ResponseFormat {
     Html,
 }
 
+impl ToString for ResponseFormat {
+    fn to_string(&self) -> String {
+        match *self {
+            ResponseFormat::Json => {
+                "application/json".to_string()
+            },
+            ResponseFormat::Html => {
+                "text/html".to_string()
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum ResponseFormatError {
     ParseFailedError(String),
@@ -70,25 +83,12 @@ pub struct Response {
 impl ToString for Response {
     /// Turns response into http response string
     fn to_string(&self) -> String {
-        let mut response = String::from("HTTP/1.1 200 OK\r\n");
-        match &self.format {
-            &ResponseFormat::Html => {
-                response.push_str("Content-Type: text/html; charset=utf-8\r\n");
-            }
-            &ResponseFormat::Json => {
-                response.push_str("Content-Type: application/json\r\n");
-            }
+        match &self.content {
+            Some(content) => {
+                content.to_string()
+            },
+            None => "".to_string()
         }
-        let content = match &self.content {
-            Some(content) => content,
-            None => "",
-        };
-        response.push_str("Content-Length: ");
-        response.push_str(&content.len().to_string());
-        response.push_str("\r\n\r\n");
-        response.push_str(&content);
-
-        response
     }
 }
 #[derive(Debug, PartialEq, Clone)]

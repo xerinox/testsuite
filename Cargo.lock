@@ -226,6 +226,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "nanohttp"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a087b38dfd5b94eced1e3974b4d58775ada79acd5f924f60c0373b03a24b1ace"
+
+[[package]]
 name = "num_cpus"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -380,6 +386,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "nanohttp",
  "serde",
  "tokio",
 ]
