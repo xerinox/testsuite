@@ -1,11 +1,17 @@
 use anyhow::Result;
+use futures::FutureExt;
+use crossterm::event;
+use crossterm::event::{EventStream, Event as CtEvent};
+
+use std::time::Duration;
 use std::{collections::HashMap, net::SocketAddr};
-use std::{sync::Mutex, time::Duration};
+use tokio::sync::{mpsc::channel, Mutex};
 mod tui;
 use clap::Parser;
 use colored::Colorize;
 use std::io::IsTerminal;
 use testsuite::{populate_map, Arguments, Message, Response};
+use tui::CliEvent;
 use tui::{Response as TuiResponse, *};
 
 #[cfg(not(feature = "multithreaded"))]
@@ -17,23 +23,29 @@ use crate::singlethreaded::{handle_connection, SingleBufTcpStream};
 mod multithreaded;
 #[cfg(feature = "multithreaded")]
 use {
-    crate::multithreaded::{handle_connection_async, push_message, MultiBufTcpStream},
+    crate::{
+        event::Event,
+        multithreaded::{handle_connection_async, push_message},
+    },
     std::sync::Arc,
 };
 
-const REFRESH_RATE: u64 = 33;
+const REFRESH_RATE: u64 = 1000;
 
-type ConnectionData = HashMap<usize, TuiResponse>;
+type ConnectionData = Vec<TuiResponse>;
 type Connections = HashMap<SocketAddr, ConnectionData>;
 
 #[cfg(feature = "multithreaded")]
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    let connections_data: ConnectionData = ConnectionData::new();
-    let connections_mutex: Mutex<ConnectionData> = Mutex::new(connections_data);
-    let connections_ref: Arc<Mutex<ConnectionData>> = Arc::new(connections_mutex);
+    use std::io::stdout;
 
-    use tokio::sync::mpsc;
+    use crossterm::{terminal::{enable_raw_mode, disable_raw_mode}, event::KeyEvent, event::KeyModifiers, event::KeyCode};
+    use futures::StreamExt;
+
+    let connections_data: Connections = Connections::new();
+    let connections_mutex: Mutex<Connections> = Mutex::new(connections_data);
+    let connections_ref: Arc<Mutex<Connections>> = Arc::new(connections_mutex);
 
     if !(std::io::stdin().is_terminal() || std::io::stdin().is_terminal()) {
         panic!("Not a terminal");
@@ -58,47 +70,79 @@ async fn main() -> Result<(), anyhow::Error> {
         " with the following endpoints: ".green(),
         map.keys().collect::<Vec<_>>()
     );
-    let (sender, mut receiver) = mpsc::channel::<Message>(100);
+    let (request_sender, mut request_receiver) = channel::<Message>(100);
+    let _server = tokio::spawn(async move {
+        let request_sender = request_sender.clone();
+        let reference = Arc::clone(&map_ref);
+        loop {
+            if let Ok((socket, addr)) = listener.accept().await {
+                let sender = request_sender.clone();
+                if let Err(err) = handle_connection_async(addr, socket, &reference, {
+                    let sender = sender.clone();
+                    sender
+                })
+                .await
+                {
+                    push_message(sender, Message::ConnectionFailed).await;
+                    eprintln!(
+                        "{} {}",
+                        "Error handling connection:".red(),
+                        err.to_string().red()
+                    );
+                }
+            }
+        }
+    });
+    type I = crossterm::event::Event;
 
-    let mut tui = Tui::default(Arc::clone(&connections_ref));
+    let stdout = stdout();
+    let out = Arc::from(Mutex::from(stdout));
+    let out2 =Arc::clone(&out);
+    let mut tui = Tui::default(Arc::clone(&connections_ref),out2);
+    let (cli_send, mut cli_recv) = channel::<CliEvent<I>>(30);
+    let mut reader = EventStream::new();
+    enable_raw_mode()?;
+
 
     loop {
-        let sender = sender.clone();
-
-        let reference = Arc::clone(&map_ref);
-        let polling = tokio::time::sleep(Duration::from_millis(REFRESH_RATE));
-
+        let mut delay = futures_timer::Delay::new(Duration::from_millis(1000)).fuse();
         tokio::select! {
             biased;
-            Ok((socket, _)) = listener.accept() => {
-                if let Ok(streams) = MultiBufTcpStream::new(socket) {
-                    if let Err(e) = handle_connection_async(streams, &reference, {let sender = sender.clone(); sender}).await {
-                        push_message({let sender = sender.clone(); sender}, Message::ConnectionFailed).await;
-                        eprintln!(
-                            "{} {}",
-                            "Error handling connection:".red(),
-                            e.to_string().red()
-                        );
+            Some(message) = request_receiver.recv() => {
+                let connections_ref = Arc::clone(&connections_ref);
+                handle_message(message, connections_ref).await;
+            },
+            Some(Ok(ev)) = reader.next().fuse() => {
+                    println!("Event::{:?}\r", ev);
+                    cli_send.send(CliEvent::Input(ev)).await?;
+            },
+            Some(ev) = cli_recv.recv() => {
+                match ev {
+                    CliEvent::Tick => {
+                        tui.render().await;
+                    },
+                    CliEvent::Input(input) => {
+                        match input {
+                            CtEvent::Key(key) => {
+                                match parse_input(key) {
+                                    Ok(_) => {},
+                                    Err(_) => {
+                                        break;
+                                    }
+                                }
+                            },
+                            _ => {}
+                        }
                     }
                 }
-            },
-            Some(message) = receiver.recv() => {
-                let connections_ref = Arc::clone(&connections_ref);
-                handle_message(message, connections_ref);
-            },
-            _ = polling => {
-                // handle tui here
-                tui.render();
             }
-
+            _ = delay => {
+                cli_send.send(CliEvent::Tick).await?;
+            }
         }
-        /*
-        tokio::spawn(async move {
-            if let Ok(streams) = MultiBufTcpStream::new(socket) {
-            }
-        });
-        */
     }
+    disable_raw_mode()?;
+    Ok(())
 }
 
 #[cfg(not(feature = "multithreaded"))]

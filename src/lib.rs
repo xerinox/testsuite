@@ -46,22 +46,24 @@ pub enum ResponseFormat {
     #[default]
     Json,
     Html,
+    None,
 }
 
+#[derive(Debug)]
 pub enum Message {
     ConnectionFailed,
     ConnectionReceived(Option<SocketAddr>),
     Response(ResponseMessage),
-    Tick,
 }
 
+#[derive(Debug)]
 pub struct ResponseMessage {
-    addr: Result<SocketAddr>,
-    response: HttpResponse,
+    pub addr: SocketAddr,
+    pub response: HttpResponse,
 }
 
 impl ResponseMessage {
-    pub fn new(addr: Result<SocketAddr>, response: &HttpResponse) -> Self {
+    pub fn new(addr: SocketAddr, response: &HttpResponse) -> Self {
         ResponseMessage {
             addr,
             response: response.clone()
@@ -78,6 +80,9 @@ impl ToString for ResponseFormat {
             },
             ResponseFormat::Html => {
                 "text/html".to_string()
+            },
+            ResponseFormat::None => {
+                String::new()
             }
         }
     }
@@ -100,7 +105,7 @@ impl FromStr for ResponseFormat {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct Response {
     pub content: Option<String>,
     pub format: ResponseFormat,
