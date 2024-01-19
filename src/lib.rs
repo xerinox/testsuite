@@ -1,7 +1,9 @@
 use clap::{Args, Parser};
+use anyhow::Result;
 use colored::Colorize;
+use nanohttp::Response as HttpResponse;
 use serde::Serialize;
-use std::{collections::HashMap, error::Error, fmt::Display, fs, path::PathBuf, str::FromStr};
+use std::{collections::HashMap, error::Error, fmt::Display, fs, path::PathBuf, str::FromStr, net::SocketAddr};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -46,6 +48,28 @@ pub enum ResponseFormat {
     Html,
 }
 
+pub enum Message {
+    ConnectionFailed,
+    ConnectionReceived(Option<SocketAddr>),
+    Response(ResponseMessage),
+    Tick,
+}
+
+pub struct ResponseMessage {
+    addr: Result<SocketAddr>,
+    response: HttpResponse,
+}
+
+impl ResponseMessage {
+    pub fn new(addr: Result<SocketAddr>, response: &HttpResponse) -> Self {
+        ResponseMessage {
+            addr,
+            response: response.clone()
+        }
+    }
+}
+
+
 impl ToString for ResponseFormat {
     fn to_string(&self) -> String {
         match *self {
@@ -58,6 +82,7 @@ impl ToString for ResponseFormat {
         }
     }
 }
+
 
 #[derive(Debug)]
 pub enum ResponseFormatError {
@@ -255,3 +280,4 @@ pub fn populate_map(args: &Arguments) -> HashMap<String, Response> {
     }
     map
 }
+
