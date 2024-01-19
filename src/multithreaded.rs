@@ -1,10 +1,11 @@
 use crate::Response;
 use anyhow::Result;
+use colored::Colorize;
 use nanohttp::{Method, Request as HttpRequest, Response as HttpResponse, Status};
 use std::str::from_utf8;
 use std::{collections::HashMap, io, sync::Arc};
 use tokio::{
-    io::{AsyncWriteExt, AsyncReadExt, BufWriter},
+    io::{AsyncReadExt, AsyncWriteExt, BufWriter},
     net::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpStream,
@@ -33,24 +34,38 @@ async fn handle(req: HttpRequest, map: &Arc<HashMap<String, Response>>) -> HttpR
             if let Some(data) = map.get(req.path.uri.as_str()) {
                 let format = data.format.to_string();
                 if let Some(content) = &data.content {
-                    println!("GET {}, response: {:?}", &req.path.uri.as_str(), content);
+                    eprintln!(
+                        "{}",
+                        format!(
+                            "{} {path} {content}",
+                            req.method.to_string(),
+                            path = &req.path.uri.as_str().to_string(),
+                            content = content
+                        ).green()
+                    );
                     HttpResponse::content(&content, &format).status(Status::Ok)
                 } else {
-                    println!("GET {}, response empty", &req.path.uri.as_str());
+                    eprintln!(
+                        "{}",
+                        format!("GET {}, response empty", &req.path.uri.as_str()).green()
+                    );
                     HttpResponse::empty().status(Status::Ok)
                 }
             } else {
-                println!("GET {}, 404", &req.path.uri.as_str());
+                eprintln!(
+                    "{}",
+                    format!("GET {}, 404", &req.path.uri.as_str()).yellow()
+                );
                 HttpResponse::empty().status(Status::NotFound)
             }
         }
         Method::POST => {
             if let Some(data) = map.get(req.path.uri.as_str()) {
                 let format = data.format.to_string();
-                println!("Post {}, response: {:?}", &req.path.uri.as_str(), &req.body);
-                HttpResponse::content(&req.body, &format).status(Status::Ok) 
+                eprintln!("{}", format!("Post {}, response: {:?}", &req.path.uri.as_str(), &req.body).green());
+                HttpResponse::content(&req.body, &format).status(Status::Ok)
             } else {
-                println!("Post {}, 404", &req.path.uri.as_str());
+                eprintln!("{}", format!("Post {}, 404", &req.path.uri.as_str()).yellow());
                 HttpResponse::empty().status(Status::NotFound)
             }
         }
