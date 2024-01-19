@@ -1,5 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
+use colored::Colorize;
+use std::io::IsTerminal;
 use testsuite::{populate_map, Arguments, Response};
 
 #[cfg(not(feature = "multithreaded"))]
@@ -18,6 +20,9 @@ use {
 #[cfg(feature = "multithreaded")]
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
+    if !(std::io::stdin().is_terminal() || std::io::stdin().is_terminal()) {
+        panic!("Not a terminal");
+    }
     let args = Arguments::parse();
     let port = args.port;
 
@@ -33,9 +38,11 @@ async fn main() -> Result<(), anyhow::Error> {
     #[cfg(feature = "multithreaded")]
     {
         let listener = tokio::net::TcpListener::bind(&end_point).await?;
-        println!(
-            "Server listening on:{:} with the following endpoints: {:?}",
-            end_point,
+        eprintln!(
+            "{}{}{}{:?}",
+            "Server listening on: ".green(),
+            end_point.white(),
+            " with the following endpoints: ".green(),
             map.keys().collect::<Vec<_>>()
         );
         loop {
@@ -45,7 +52,11 @@ async fn main() -> Result<(), anyhow::Error> {
             tokio::spawn(async move {
                 if let Ok(streams) = MultiBufTcpStream::new(socket) {
                     if let Err(e) = handle_connection_async(streams, &reference).await {
-                        println!("Error handling connection: {:?}", e);
+                        eprintln!(
+                            "{} {}",
+                            "Error handling connection:".red(),
+                            e.to_string().red()
+                        );
                     }
                 }
             });
@@ -55,6 +66,9 @@ async fn main() -> Result<(), anyhow::Error> {
 
 #[cfg(not(feature = "multithreaded"))]
 fn main() -> Result<()> {
+    if !(std::io::stdin().is_terminal() || std::io::stdin().is_terminal()) {
+        panic!("Not a terminal");
+    }
     let args = Arguments::parse();
     let port = args.port;
 
@@ -66,10 +80,11 @@ fn main() -> Result<()> {
     };
     let end_point: String = host.to_owned() + ":" + &port.to_string();
     let listener = std::net::TcpListener::bind(&end_point)?;
-    println!(
-        "Server listening on:{:}{:} with the following endpoints: {:?}",
-        end_point,
-        &args.endpoint,
+    eprintln!("{}, {:}{:} {} {:?}",
+        "Server listening on:".green(),
+        end_point.white(),
+        &args.endpoint.white(),
+        " with the following endpoints:".green(),
         map.keys().collect::<Vec<_>>()
     );
     for stream in listener.incoming() {

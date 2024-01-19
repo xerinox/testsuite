@@ -1,4 +1,5 @@
 use std::io::Read;
+use colored::Colorize;
 use std::{collections::HashMap, net::TcpStream};
 
 use core::str::from_utf8;
@@ -27,16 +28,16 @@ fn handle(req: HttpRequest, map: &HashMap<String, Response>) -> HttpResponse {
                 let format = data.format.to_string();
                 match &data.content {
                     Some(data) => {
-                        println!("GET {}, response: {:?}", &req.path.uri.as_str(), data);
+                        eprintln!("{}", format!("GET {}, response: {:?}", &req.path.uri.as_str(), data).green());
                         HttpResponse::content(&data, &format).status(Status::Ok)
                     },
                     None => {
-                        println!("GET {} response empty", &req.path.uri.as_str());
+                        eprintln!("{}", format!("GET {} response empty", &req.path.uri.as_str()).green());
                         HttpResponse::empty().status(Status::Ok)
                     }
                 }
             } else {
-                println!("GET {} 404", &req.path.uri.as_str());
+                eprintln!("{}", format!("GET {} 404", &req.path.uri.as_str()).yellow());
                 HttpResponse::empty().status(Status::NotFound)
             }
         }
@@ -44,10 +45,10 @@ fn handle(req: HttpRequest, map: &HashMap<String, Response>) -> HttpResponse {
         Method::POST => {
             if let Some(data) = map.get(req.path.uri.as_str()) {
                 let format = data.format.to_string();
-                println!("Post {}, response: {:?}", &req.path.uri.as_str(), &req.body);
+                eprintln!("{}", format!("Post {}, response: {:?}", &req.path.uri.as_str(), &req.body).green());
                 HttpResponse::content(&req.body, &format).status(Status::Ok) 
             } else {
-                println!("Post {}, 404", &req.path.uri.as_str());
+                eprintln!("{}", format!("Post {}, 404", &req.path.uri.as_str()).yellow());
                 HttpResponse::empty().status(Status::NotFound)
             }
         }

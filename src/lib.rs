@@ -1,4 +1,5 @@
 use clap::{Args, Parser};
+use colored::Colorize;
 use serde::Serialize;
 use std::{collections::HashMap, error::Error, fmt::Display, fs, path::PathBuf, str::FromStr};
 
@@ -116,10 +117,7 @@ impl Response {
             content: match path.exists() {
                 true => Some(fs::read_to_string(path).expect("File is unreadable")),
                 false => {
-                    println!(
-                        "Could not find file: {:}, continuing with blank response",
-                        path.to_str().expect("Path is unparseable")
-                    );
+                    eprintln!("{}", format!("Could not find file: {:}, continuing with blank response", path.to_str().expect("Path is unparseable")).yellow());
                     None
                 }
             },
@@ -156,7 +154,7 @@ impl Response {
                             Some(some)
                         },
                         Err(e) => {
-                            println!("Error: could not read directory: {:?}", e);
+                            eprintln!("{}", format!("Error: could not read directory: {:?}", e).red());
                             None
                         }
                     }).filter_map(|file| {
@@ -177,11 +175,11 @@ impl Response {
                                     Some((ResponseFormat::Html, file.path()))
                                 },
                                 (_, Some(_)) => {
-                                    println!("File: {} does not have a valid extension [html, json]", file.path().to_str()?);
+                                    eprintln!("{}", format!("File: {} does not have a valid extension [html, json]", file.path().to_str()?).yellow());
                                     None
                                 },
                                 (Some(_), None) => {
-                                    println!("File: {} does not have a file name for use in endpoint generation", file.path().to_str()?);
+                                    eprintln!("{}", format!("File: {} does not have a file name for use in endpoint generation", file.path().to_str()?).yellow());
                                     None
                                 },
                                 _ => {
@@ -189,7 +187,7 @@ impl Response {
                                 }
                             }
                         } else {
-                            println!("File: {} does not have an extension, valid extensions are [html, json]", file.path().to_str()?);
+                            eprintln!("{}", format!("File: {} does not have an extension, valid extensions are [html, json]", file.path().to_str()?).yellow());
                             None
                         }
 
@@ -243,11 +241,11 @@ pub fn populate_map(args: &Arguments) -> HashMap<String, Response> {
         (None, None, Some(content_folder)) => {
             match Response::from_folder(&content_folder) {
                 Ok(map_b) => {
-                    println!("Valid endpoints: {:?}", map_b.keys().collect::<Vec<_>>());
+                    eprintln!("Valid endpoints: {:?}", map_b.keys().collect::<Vec<_>>());
                     map.extend(map_b)
                 }
                 Err(e) => {
-                    println!("Error while parsing content folder: {:?}", e);
+                    eprintln!("Error while parsing content folder: {:?}", e);
                 }
             }
         }
