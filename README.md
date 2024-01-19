@@ -44,3 +44,4 @@ executing `testsuite -c="{ \"id\": 1 }" -e="/id"` will start up the server on 12
 ### Several endpoints: 
 `testsuite --content-folder="<path>/"` will start up a server on 127.0.0.1:8080, and each html/json file in the folder will be an endpoint with their file name(without extension) as the endpoint address and http Content-Type matching the extension
 
+© 2024
