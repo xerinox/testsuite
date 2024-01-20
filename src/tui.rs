@@ -1,36 +1,68 @@
 use crate::tui::Response as TuiResponse;
-use std::io::Write;
-use crate::{ConnectionData, Connections};
-use crossterm::event;
-use crossterm::QueueableCommand;
-use std::io::Stdout;
+use std::collections::HashMap;
+use crate::Connections;
+use crossterm;
+use crossterm::event::Event;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::QueueableCommand;
+use futures::lock::Mutex;
+use std::io::Stdout;
+use std::io::Write;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use testsuite::Response as bl;
 use testsuite::ResponseFormat;
-use tokio::sync::Mutex;
+use anyhow::Result;
 
 use testsuite::Message;
-#[derive(Copy, Clone, Debug)]
-pub enum CliEvent<I> {
-    Input(I),
-    Tick,
-}
 
-pub fn parse_input(input: KeyEvent) -> anyhow::Result<()>{
-    let (letter, modifier) = (input.code, input.modifiers);
-    let res = match (letter, modifier) {
-        (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-            return Err(anyhow::format_err!("Pressed ctrl q"));
-        },
-        _ => {
-            println!("Got letter: {input:?}");
-            return Ok(())
+pub async fn parse_cli_event(
+    event: Option<crossterm::event::Event>,
+    out: Arc<Mutex<Stdout>>,
+    connections: Arc<Mutex<Connections>>,
+    w: &mut u16,
+    h: &mut u16,
+    exit: &mut Option<String>
+) -> anyhow::Result<()> {
+    let mut out = out.lock().await;
+    let cw: usize = w.abs_diff(0).into();
+    let mut bar = "-".repeat(cw);
+    if let Some(event) = event {
+        match event {
+            Event::Key(key) => {
+                let (letter, modifier) = (key.code, key.modifiers);
+                let _res = match (letter, modifier) {
+                    (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                        *exit = Some("Pressed ctrl+q".to_string());
+                    }
+                    _ => {
+                        out.write(format!("Got letter: {key:?}").as_bytes())?;
+                    }
+                };
+            }
+            Event::FocusGained => {},
+            Event::FocusLost => {},
+            Event::Mouse(_) => {},
+            Event::Paste(_) => {},
+            Event::Resize(nw, nh) => {
+                *w = nw.into();
+                *h = nh.into();
+            }
         }
-    };
+    } else {
+        out.queue(crossterm::terminal::Clear(
+            crossterm::terminal::ClearType::All,
+        ))?;
+        out.queue(crossterm::cursor::MoveTo(0, 0))?;
+        let connections = connections.lock().await;
+        let len = connections.len().to_string();
+        out.write(len.as_bytes())?;
+    }
+    Ok(())
+
 }
 
+#[allow(dead_code)]
 enum Screen {
     List,
     Details,
@@ -49,6 +81,23 @@ impl From<Screen> for usize {
 pub struct Response {
     addr: SocketAddr,
     http_response: testsuite::Response,
+}
+
+pub async fn tick(out: Arc<Mutex<Stdout>>, connections: Arc<Mutex<Connections>>) -> Result<()> {
+    let out = &mut out.lock().await;
+    out.queue(crossterm::terminal::Clear(
+        crossterm::terminal::ClearType::All,
+    ))?;
+    out.queue(crossterm::cursor::MoveTo(0, 0))?;
+    out.write(
+        format!(
+            "antall connections: {:?}",
+            connections.lock().await.len()
+        )
+        .as_bytes(),
+    )?;
+    out.flush()?;
+    Ok(())
 }
 
 pub async fn handle_message(message: Message, connections: Arc<Mutex<Connections>>) {
@@ -106,22 +155,5 @@ pub async fn handle_message(message: Message, connections: Arc<Mutex<Connections
             },
             None => {}
         },
-    }
-}
-
-pub struct Tui {
-    connections: Arc<Mutex<Connections>>,
-    stdout: Arc<Mutex<Stdout>>,
-}
-impl Tui {
-    pub async fn render(&mut self) {
-        let a = &self.connections.lock().await;
-        let out = &mut self.stdout.lock().await;
-        let _r = out.queue(crossterm::terminal::Clear(crossterm::terminal::ClearType::All));
-        let _r = out.queue(crossterm::cursor::MoveTo(0,0));
-        println!("{:?}", a.values().len());
-    }
-    pub fn default(connections: Arc<Mutex<Connections>>, stdout: Arc<Mutex<Stdout>>) -> Tui {
-        Tui { connections , stdout}
     }
 }

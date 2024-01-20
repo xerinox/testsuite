@@ -1,77 +1,53 @@
 use anyhow::Result;
+use crossterm::QueueableCommand;
+use crossterm::event::EventStream;
 use futures::FutureExt;
-use crossterm::event;
-use crossterm::event::{EventStream, Event as CtEvent};
+use std::sync::Arc;
 
 use std::time::Duration;
 use std::{collections::HashMap, net::SocketAddr};
-use tokio::sync::{mpsc::channel, Mutex};
+use tokio::sync::mpsc::channel;
+use futures::lock::Mutex;
 mod tui;
 use clap::Parser;
 use colored::Colorize;
-use std::io::IsTerminal;
 use testsuite::{populate_map, Arguments, Message, Response};
-use tui::CliEvent;
 use tui::{Response as TuiResponse, *};
+use std::io::stdout;
 
-#[cfg(not(feature = "multithreaded"))]
-mod singlethreaded;
-#[cfg(not(feature = "multithreaded"))]
-use crate::singlethreaded::{handle_connection, SingleBufTcpStream};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+use futures::StreamExt;
 
-#[cfg(feature = "multithreaded")]
-mod multithreaded;
-#[cfg(feature = "multithreaded")]
-use {
-    crate::{
-        event::Event,
-        multithreaded::{handle_connection_async, push_message},
-    },
-    std::sync::Arc,
-};
+mod server;
+use crate::server::*;
 
 const REFRESH_RATE: u64 = 1000;
 
-type ConnectionData = Vec<TuiResponse>;
-type Connections = HashMap<SocketAddr, ConnectionData>;
+pub type ConnectionData = Vec<TuiResponse>;
+pub type Connections = HashMap<SocketAddr, ConnectionData>;
 
-#[cfg(feature = "multithreaded")]
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    use std::io::stdout;
-
-    use crossterm::{terminal::{enable_raw_mode, disable_raw_mode}, event::KeyEvent, event::KeyModifiers, event::KeyCode};
-    use futures::StreamExt;
-
     let connections_data: Connections = Connections::new();
     let connections_mutex: Mutex<Connections> = Mutex::new(connections_data);
     let connections_ref: Arc<Mutex<Connections>> = Arc::new(connections_mutex);
 
-    if !(std::io::stdin().is_terminal() || std::io::stdin().is_terminal()) {
-        panic!("Not a terminal");
-    }
     let args = Arguments::parse();
     let port = args.port;
 
     let map = populate_map(&args);
+    let map_ref = Arc::from(map.clone());
+
     let host = match &args.allow_remote {
         true => "0.0.0.0",
         false => "127.0.0.1",
     };
-
-    let map_ref = Arc::from(map.clone());
-
     let end_point: String = host.to_owned() + ":" + &port.to_string();
+
     let listener = tokio::net::TcpListener::bind(&end_point).await?;
-    eprintln!(
-        "{}{}{}{:?}",
-        "Server listening on: ".green(),
-        end_point.white(),
-        " with the following endpoints: ".green(),
-        map.keys().collect::<Vec<_>>()
-    );
     let (request_sender, mut request_receiver) = channel::<Message>(100);
-    let _server = tokio::spawn(async move {
+
+    let server = tokio::spawn(async move {
         let request_sender = request_sender.clone();
         let reference = Arc::clone(&map_ref);
         loop {
@@ -93,86 +69,49 @@ async fn main() -> Result<(), anyhow::Error> {
             }
         }
     });
-    type I = crossterm::event::Event;
 
     let stdout = stdout();
     let out = Arc::from(Mutex::from(stdout));
-    let out2 =Arc::clone(&out);
-    let mut tui = Tui::default(Arc::clone(&connections_ref),out2);
-    let (cli_send, mut cli_recv) = channel::<CliEvent<I>>(30);
+    #[allow(unused_variables, unused_mut)]
+    let (mut w, mut h) = crossterm::terminal::size()?;
+    #[warn(unused_mut, unused_variables)]
     let mut reader = EventStream::new();
     enable_raw_mode()?;
+    let mut exit = None::<String>;
 
-
-    loop {
-        let mut delay = futures_timer::Delay::new(Duration::from_millis(1000)).fuse();
+    let shutdown_reason = loop {
+        if exit.is_some() {
+            break exit.unwrap();
+        }
+        let delay = futures_timer::Delay::new(Duration::from_millis(REFRESH_RATE)).fuse();
+        let connections= Arc::clone(&connections_ref);
+        let out = Arc::clone(&out);
         tokio::select! {
             biased;
             Some(message) = request_receiver.recv() => {
                 let connections_ref = Arc::clone(&connections_ref);
                 handle_message(message, connections_ref).await;
             },
-            Some(Ok(ev)) = reader.next().fuse() => {
-                    println!("Event::{:?}\r", ev);
-                    cli_send.send(CliEvent::Input(ev)).await?;
-            },
-            Some(ev) = cli_recv.recv() => {
-                match ev {
-                    CliEvent::Tick => {
-                        tui.render().await;
-                    },
-                    CliEvent::Input(input) => {
-                        match input {
-                            CtEvent::Key(key) => {
-                                match parse_input(key) {
-                                    Ok(_) => {},
-                                    Err(_) => {
-                                        break;
-                                    }
-                                }
-                            },
-                            _ => {}
-                        }
+            Some(Ok(event)) = reader.next().fuse() => {
+                let connections_ref= Arc::clone(&connections_ref);
+                match parse_cli_event(Some(event), out, connections_ref, &mut w, &mut h, &mut exit).await {
+                    Ok(()) => {},
+                    Err(_) => {
                     }
                 }
             }
             _ = delay => {
-                cli_send.send(CliEvent::Tick).await?;
+               _ =  tick(out, connections).await.map_err(|e| {
+                    println!("Could not perform tick, out is locked: {:?}", e)
+                });
             }
         }
-    }
-    disable_raw_mode()?;
-    Ok(())
-}
-
-#[cfg(not(feature = "multithreaded"))]
-fn main() -> Result<()> {
-    if !(std::io::stdin().is_terminal() || std::io::stdin().is_terminal()) {
-        panic!("Not a terminal");
-    }
-    let args = Arguments::parse();
-    let port = args.port;
-
-    let map = populate_map(&args);
-
-    let host = match &args.allow_remote {
-        true => "0.0.0.0",
-        false => "127.0.0.1",
     };
-    let end_point: String = host.to_owned() + ":" + &port.to_string();
-    let listener = std::net::TcpListener::bind(&end_point)?;
-    eprintln!(
-        "{}, {:}{:} {} {:?}",
-        "Server listening on:".green(),
-        end_point.white(),
-        &args.endpoint.white(),
-        " with the following endpoints:".green(),
-        map.keys().collect::<Vec<_>>()
-    );
-    for stream in listener.incoming() {
-        let stream = stream?;
-        let streams = SingleBufTcpStream::new(&stream)?;
-        handle_connection(streams, &map)?;
-    }
+    out.lock().await.queue(crossterm::terminal::Clear(crossterm::terminal::ClearType::All))?;
+    out.lock().await.queue(crossterm::cursor::MoveTo(0, 0))?;
+    println!("Shutting down server due to: {shutdown_reason}");
+    out.lock().await.queue(crossterm::cursor::MoveTo(0, 1))?;
+    server.abort();
+    disable_raw_mode()?;
     Ok(())
 }
