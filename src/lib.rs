@@ -1,7 +1,7 @@
 use clap::{Args, Parser};
 use anyhow::Result;
 use colored::Colorize;
-use nanohttp::Response as HttpResponse;
+use nanohttp::{Response as HttpResponse, Method, Status};
 use serde::Serialize;
 use std::{collections::HashMap, error::Error, fmt::Display, fs, path::PathBuf, str::FromStr, net::SocketAddr};
 
@@ -105,7 +105,7 @@ impl FromStr for ResponseFormat {
     }
 }
 
-#[derive(Default, Clone, Debug)]
+#[derive(Default,Clone, Debug)]
 pub struct Response {
     pub content: Option<String>,
     pub format: ResponseFormat,

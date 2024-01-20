@@ -74,7 +74,7 @@ async fn handle(
     }
 }
 
-pub async fn handle_connection_async(
+pub async fn handle_connection(
     addr: SocketAddr,
     mut stream: TcpStream,
     map: &Arc<HashMap<String, Response>>,
