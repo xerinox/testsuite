@@ -48,7 +48,7 @@ struct ConnectionList<'a> {
     selected: (usize, usize),
     address_list_bounds: Rect,
     details_list_bounds: Rect,
-    window_size: Rect,
+    window_size: Rect
 }
 
 #[derive(Debug)]
@@ -72,8 +72,8 @@ impl Rect {
 impl<'a> ConnectionList<'a> {
     fn default(groups: &Connections, window_size: Rect) -> ConnectionList {
         let bounds = Rect {
-            rows: (window_size.rows.0 + 1, window_size.rows.1 - 1),
-            cols: (window_size.cols.0 + 1, window_size.cols.1 - 1),
+            rows: (window_size.rows.0+1, window_size.rows.1 - 1),
+            cols: (window_size.cols.0+1, window_size.cols.1 - 1),
         };
 
         let addr_list_length: usize = bounds
@@ -89,6 +89,7 @@ impl<'a> ConnectionList<'a> {
                     .max()
                     .unwrap_or(0),
             );
+
 
         let (address_list_bounds, details_list_bounds): (Rect, Rect) = (
             Rect::new((1, addr_list_length), (1, bounds.rows.1)),
@@ -115,23 +116,22 @@ impl<'a> ConnectionList<'a> {
 
     async fn render(&self, out: Arc<Mutex<Stdout>>) -> anyhow::Result<()> {
         let mut out = out.lock().await;
-        let connection_group_list: Vec<Vec<String>> = self
+        let connection_group_list: Vec<Vec<anyhow::Result<&str>>> = self
             .groups
             .iter()
             .map(|x| x.render(&self.address_list_bounds, self.selected.0))
             .collect();
-
-        /*let connection_group_members = match self.groups.get(self.selected.0) {
-            Some(connection_group_members) => connection_group_members
-                .print_group_members(self.selected.1, &self.details_list_bounds),
+        out.queue(Print(format!("gl: {connection_group_list:?}")))?;
+        let connection_group_members = match self.groups.get(self.selected.1) {
+            Some(ref connection_group_members) => connection_group_members
+                .print_group_members(self.selected.0, &self.details_list_bounds),
             None => {
                 let mut a = Vec::<&str>::new();
-                a.push("No selected member");
+                a.push("No members in list");
                 a
             }
-        };*/
-
-        out.queue(Print(format!("connection_groups: {connection_group_list:?}")))?;
+        };
+        out.queue(Print(format!("gl: {connection_group_members:?}")))?;
         out.queue(crossterm::cursor::MoveToNextLine(1))?;
         Ok(())
     }
@@ -146,27 +146,32 @@ struct ConnectionListGroup<'a> {
 
 #[allow(dead_code)]
 impl<'a> ConnectionListGroup<'a> {
-    fn render(&self, addr_list_bounds: &Rect, selected: usize) -> Vec<String> {
-        self
+    fn render(&self, addr_list_bounds: &Rect, selected: usize) -> Vec<anyhow::Result<&str>> {
+        let mut buf: Vec<anyhow::Result<&str>> = Vec::new();
+        let mut len = 0 as usize;
+        let a = self
             .lines
             .iter()
             .enumerate()
-            .take(addr_list_bounds.cols.1.max(self.lines.len()))
             .map(|(index, line)| {
-                line.render(index == selected)
-            }).collect()
+                len = index;
+                let group_selected = index == selected;
+                buf.push(line.render(group_selected));
+            })
+            .take(addr_list_bounds.cols.1);
+        buf
     }
 
     fn print_group_members(&self, selected_member: usize, bounds: &Rect) -> Vec<&str> {
-        self.lines.iter().enumerate().take(bounds.rows.1.max(self.lines.len() -1 )).map(|(index, line)| {
-            if let Some(content) = &line.response.http_response.content {
+        let max_length = bounds.cols.0.abs_diff(bounds.cols.1);
+        let mut buf: Vec<&str> = Vec::new();
+        self.lines.iter().enumerate().for_each(|(index, line)| {
+            if let Some(line) = &line.response.http_response.content {
                 let _ = index == selected_member;
-                let max_length = bounds.cols.0.abs_diff(bounds.cols.1).max(content.len());
-                &content[0..max_length]
-            } else {
-                "No response"
+                buf.push(&line[0..max_length]);
             }
-        }).collect()
+        });
+        buf.into_iter().take(bounds.rows.1).collect()
     }
 }
 
@@ -178,8 +183,8 @@ struct ConnectionListGroupLine<'a> {
 
 #[allow(dead_code)]
 impl<'a> ConnectionListGroupLine<'a> {
-    fn render(&self, _selected: bool) -> String{
-        self.response.addr.clone().to_string()
+    fn render(&self, selected: bool) -> anyhow::Result<&str> {
+        Ok(&self.response.addr())
     }
 }
 
@@ -228,15 +233,7 @@ impl TuiState {
                 &self.connections_cache,
                 Rect::new((0, self.window_size.0), (0, self.window_size.1)),
             );
-            if let Err(e) = cl
-                .render({
-                    let out = Arc::clone(&out);
-                    out
-                })
-                .await
-            {
-                out.lock().await.queue(Print(format!("ERROR: {e:?}")))?;
-            }
+            cl.render(out).await?;
         }
         let out = Arc::clone(&out);
         let mut out = out.lock().await;
@@ -321,7 +318,6 @@ pub struct Response {
 }
 
 pub async fn handle_message(message: Message, connections: Arc<Mutex<Connections>>) {
-    println!("Handling message");
     let mut connections = connections.lock().await;
     match message {
         Message::ConnectionFailed => {}
