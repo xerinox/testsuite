@@ -2,6 +2,7 @@ use anyhow::Result;
 use crossterm::event::EventStream;
 use crossterm::QueueableCommand;
 use futures::FutureExt;
+use std::net::IpAddr;
 use std::process::{self};
 use std::sync::Arc;
 
@@ -24,7 +25,7 @@ use crate::server::*;
 
 const REFRESH_RATE: u64 = 1000;
 
-pub type Connections = HashMap<SocketAddr, Vec<TuiResponse>>;
+pub type Connections = HashMap<IpAddr, Vec<TuiResponse>>;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
@@ -90,6 +91,7 @@ async fn main() -> Result<(), anyhow::Error> {
             }
         }
     });
+
     let shutdown_reason = loop {
         let out = Arc::clone(&out);
         if exit.is_some() {
@@ -99,27 +101,23 @@ async fn main() -> Result<(), anyhow::Error> {
         tokio::select! {
             _ = delay => {
                 if let Err(err) = parse_cli_event(None, {let out = Arc::clone(&out); out}, {let tuistate = Arc::clone(&tuistate); tuistate}, &mut exit).await{
-                    disable_raw_mode()?;
-                    eprintln!("Hit an error: {}",err);
-                    process::exit(1);
+                    format!("Error in cli tick: {err:?}");
                 }
             }
             Some(Ok(event)) = reader.next().fuse() => {
                 let tuistate = Arc::clone(&tuistate);
                 match parse_cli_event(Some(event), {let out = Arc::clone(&out); out}, tuistate,&mut exit).await {
                     Ok(()) => {},
-                    Err(e) => {
-                        disable_raw_mode()?;
-                        eprintln!("{:?}", e);
-                        process::exit(1);
+                    Err(err) => {
+                        format!("Error in cli parse: {err:?}");
                     }
                 }
             }
         }
     };
-    /*out.lock().await.queue(crossterm::terminal::Clear(
+    out.lock().await.queue(crossterm::terminal::Clear(
         crossterm::terminal::ClearType::All,
-    ))?;*/
+    ))?;
     out.lock().await.queue(crossterm::cursor::MoveTo(0, 0))?;
     println!("Shutting down server due to: {shutdown_reason}");
     out.lock().await.queue(crossterm::cursor::MoveTo(0, 1))?;
