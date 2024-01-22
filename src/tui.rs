@@ -292,12 +292,13 @@ impl<'a> ConnectionListGroup<'a> {
         let max_length = bounds.height().min(self.lines.len());
         self.lines
             .iter()
-            .take(self.lines.len().min(max_length))
+            .take(max_length)
             .map(|line| {
                 if let Some(content) = &line.response.http_response.content {
+                    let content = content.trim();
                     let max_length = bounds.width().min(content.len());
                     let mut buf = String::new();
-                    buf.push_str(&content.trim()[0..max_length]);
+                    buf.push_str(&content[0..max_length]);
                     buf
                 } else {
                     "No response".to_string()
