@@ -47,7 +47,6 @@ impl From<Screen> for usize {
         }
     }
 }
-
 #[derive(Debug)]
 struct ConnectionList<'a> {
     groups: Vec<ConnectionListGroup<'a>>,
@@ -94,14 +93,14 @@ impl<'a> ConnectionList<'a> {
             cols: (window_size.cols.0, window_size.cols.1),
         };
 
-        let addr_list_length: usize = connection_list_bounds
-            .width()
-            .checked_div(3)
-            .unwrap_or(0);
+        let addr_list_length: usize = connection_list_bounds.width().checked_div(3).unwrap_or(0);
 
         let (address_list_bounds, details_list_bounds): (Rect, Rect) = (
             Rect::new((1, addr_list_length), (1, connection_list_bounds.rows.1)),
-            Rect::new((addr_list_length + 1, connection_list_bounds.cols.1), (1, connection_list_bounds.rows.1)),
+            Rect::new(
+                (addr_list_length + 1, connection_list_bounds.cols.1),
+                (1, connection_list_bounds.rows.1),
+            ),
         );
 
         let groups: Vec<ConnectionListGroup> = groups
@@ -131,7 +130,11 @@ impl<'a> ConnectionList<'a> {
         let mut connection_group_list: Vec<String> =
             self.groups.iter().map(|x| x.render()).collect();
 
-        self.selected.0 = self.selected.0.max(0).min(connection_group_list.len().checked_sub(1).unwrap_or(1));
+        self.selected.0 = self
+            .selected
+            .0
+            .max(0)
+            .min(connection_group_list.len().checked_sub(1).unwrap_or(1));
         let mut connection_group_members =
             match self.groups.get(self.selected.0.checked_sub(1).unwrap_or(0)) {
                 Some(connection_group_members) => {
@@ -141,9 +144,16 @@ impl<'a> ConnectionList<'a> {
                     vec![]
                 }
             };
-        self.selected.1 = self.selected.1.max(0).min(connection_group_members.len().checked_sub(1).unwrap_or(0));
+        self.selected.1 = self
+            .selected
+            .1
+            .max(0)
+            .min(connection_group_members.len().checked_sub(1).unwrap_or(0));
 
-        match connection_group_list.len().cmp(&connection_group_members.len()) {
+        match connection_group_list
+            .len()
+            .cmp(&connection_group_members.len())
+        {
             Ordering::Less => {
                 connection_group_list.resize(connection_group_members.len(), String::new());
             }
@@ -155,7 +165,10 @@ impl<'a> ConnectionList<'a> {
 
         let mut buffer: Vec<(Option<&str>, Option<&str>)> = vec![];
 
-        for pair in connection_group_list.iter().zip_longest(connection_group_members.iter()) {
+        for pair in connection_group_list
+            .iter()
+            .zip_longest(connection_group_members.iter())
+        {
             match pair {
                 itertools::EitherOrBoth::Both(list, members) => {
                     buffer.push((Some(list), Some(members)));
@@ -174,7 +187,10 @@ impl<'a> ConnectionList<'a> {
             .enumerate()
             .take(self.window_size.height())
         {
-            let selected_lines = (line == self.selected.0, (line == self.selected.1) && self.screen == Screen::Details);
+            let selected_lines = (
+                line == self.selected.0,
+                (line == self.selected.1) && self.screen == Screen::Details,
+            );
             let line = line as u16;
             let line_text = self.print_line(line_content, selected_lines);
             out.queue(MoveTo(1, line))?;
@@ -203,10 +219,8 @@ impl<'a> ConnectionList<'a> {
         line: (Option<&str>, Option<&str>),
         selected: (bool, bool),
     ) -> (ColoredString, ColoredString) {
-        let address_max_length = self
-            .address_list_bounds.width();
-        let members_max_length = self
-            .details_list_bounds.width();
+        let address_max_length = self.address_list_bounds.width();
+        let members_max_length = self.details_list_bounds.width();
 
         let result = match line {
             (Some(list), Some(members)) => {

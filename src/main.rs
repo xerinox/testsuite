@@ -3,12 +3,11 @@ use crossterm::event::EventStream;
 use crossterm::QueueableCommand;
 use futures::FutureExt;
 use std::net::IpAddr;
-use std::process::{self};
 use std::sync::Arc;
 
 use futures::lock::Mutex;
 use std::time::Duration;
-use std::{collections::HashMap, net::SocketAddr};
+use std::collections::HashMap;
 use tokio::sync::mpsc::channel;
 mod tui;
 use clap::Parser;
@@ -72,8 +71,6 @@ async fn main() -> Result<(), anyhow::Error> {
     let stdout = stdout();
     let out = Arc::from(Mutex::from(stdout));
     enable_raw_mode()?;
-    #[allow(unused_variables, unused_mut)]
-    #[warn(unused_mut, unused_variables)]
     let mut reader = EventStream::new();
     let mut exit = None::<String>;
     let tuistate = Arc::new(Mutex::new(TuiState::new(
