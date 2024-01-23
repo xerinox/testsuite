@@ -1,5 +1,5 @@
 use crate::Message;
-use crate::Response;
+use crate::ResponseContent;
 use anyhow::Result;
 use nanohttp::{Method, Request as HttpRequest, Response as HttpResponse, Status};
 use std::net::SocketAddr;
@@ -15,7 +15,7 @@ pub async fn push_message(tx: mpsc::Sender<Message>, message: Message) {
 
 async fn handle(
     req: HttpRequest,
-    map: &Arc<HashMap<String, Response>>,
+    map: &Arc<HashMap<String, ResponseContent>>,
     addr: SocketAddr,
     sender: mpsc::Sender<Message>,
 ) -> HttpResponse {
@@ -77,7 +77,7 @@ async fn handle(
 pub async fn handle_connection(
     addr: SocketAddr,
     mut stream: TcpStream,
-    map: &Arc<HashMap<String, Response>>,
+    map: &Arc<HashMap<String, ResponseContent>>,
     sender: tokio::sync::mpsc::Sender<Message>,
 ) -> Result<()> {
     push_message({let sender = sender.clone(); sender}, Message::ConnectionReceived(Some(addr))).await;

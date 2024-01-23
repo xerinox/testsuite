@@ -13,8 +13,8 @@ mod tui;
 use clap::Parser;
 use colored::Colorize;
 use std::io::stdout;
-use testsuite::{populate_map, Arguments, Message, Response};
-use tui::{Response as TuiResponse, *};
+use testsuite::{populate_map, Arguments, Message, ResponseContent};
+use tui::{TuiResponse, *};
 
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use futures::StreamExt;
@@ -72,7 +72,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let out = Arc::from(Mutex::from(stdout));
     enable_raw_mode()?;
     let mut reader = EventStream::new();
-    let mut exit = None::<String>;
+    let mut exit_reason = None::<String>;
     let tuistate = Arc::new(Mutex::new(TuiState::new(
         Arc::clone(&connections_ref),
     ).await));
@@ -81,29 +81,27 @@ async fn main() -> Result<(), anyhow::Error> {
     let message_client = tokio::spawn(async move {
         loop {
             if let Some(message) = request_receiver.recv().await {
-                let tuistate = Arc::clone(&tui_ref);
-                tuistate.lock().await.needs_update = true;
-                let connections = Arc::clone(&connections_ref);
-                handle_message(message, connections).await;
+                handle_message(message, {let connections = Arc::clone(&connections_ref); connections}).await;
+                Arc::clone(&tui_ref).lock().await.needs_update = true;
             }
         }
     });
 
     let shutdown_reason = loop {
         let out = Arc::clone(&out);
-        if exit.is_some() {
-            break exit.unwrap();
+        if exit_reason.is_some() {
+            break exit_reason.unwrap();
         }
         let delay = futures_timer::Delay::new(Duration::from_millis(REFRESH_RATE)).fuse();
         tokio::select! {
             _ = delay => {
-                if let Err(err) = parse_cli_event(None, {let out = Arc::clone(&out); out}, {let tuistate = Arc::clone(&tuistate); tuistate}, &mut exit).await{
+                if let Err(err) = parse_cli_event(None, {let out = Arc::clone(&out); out}, {let tuistate = Arc::clone(&tuistate); tuistate}, &mut exit_reason).await{
                     format!("Error in cli tick: {err:?}");
                 }
             }
             Some(Ok(event)) = reader.next().fuse() => {
                 let tuistate = Arc::clone(&tuistate);
-                match parse_cli_event(Some(event), {let out = Arc::clone(&out); out}, tuistate,&mut exit).await {
+                match parse_cli_event(Some(event), {let out = Arc::clone(&out); out}, tuistate,&mut exit_reason).await {
                     Ok(()) => {},
                     Err(err) => {
                         format!("Error in cli parse: {err:?}");

@@ -1,4 +1,3 @@
-use crate::tui::Response as TuiResponse;
 use crate::Connections;
 use chrono::{DateTime, Utc};
 use colored::{ColoredString, Colorize};
@@ -11,11 +10,10 @@ use crossterm::QueueableCommand;
 use futures::lock::Mutex;
 use itertools::Itertools;
 use std::cmp::Ordering;
-use std::io::Stdout;
-use std::io::Write;
+use std::io::{Stdout, Write};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use testsuite::Response as bl;
+use testsuite::ResponseContent;
 use testsuite::ResponseFormat;
 
 use testsuite::Message;
@@ -325,7 +323,7 @@ impl<'a> ConnectionListGroup<'a> {
 #[allow(dead_code)]
 #[derive(Debug)]
 struct ConnectionListGroupLine<'a> {
-    response: &'a Response,
+    response: &'a TuiResponse,
 }
 
 #[allow(dead_code)]
@@ -413,7 +411,7 @@ pub async fn parse_cli_event(
     event: Option<crossterm::event::Event>,
     out: Arc<Mutex<Stdout>>,
     tuistate: Arc<Mutex<TuiState>>,
-    exit: &mut Option<String>,
+    exit_reason: &mut Option<String>,
 ) -> anyhow::Result<()> {
     let mut moved: (Option<Direction>, Option<Direction>) = (None, None);
     let mut changed_state: Option<Screen> = None;
@@ -424,7 +422,7 @@ pub async fn parse_cli_event(
                 let (letter, modifier) = (key.code, key.modifiers);
                 let _res = match (letter, modifier) {
                     (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                        *exit = Some("Pressed ctrl+q".to_string());
+                        *exit_reason = Some("Pressed ctrl+q".to_string());
                     }
                     (KeyCode::Up, KeyModifiers::NONE) => {
                         //out.queue(crossterm::cursor::MoveUp(1))?;
@@ -519,9 +517,9 @@ pub async fn parse_cli_event(
 }
 
 #[derive(Debug, Clone)]
-pub struct Response {
+pub struct TuiResponse {
     addr: SocketAddr,
-    http_response: testsuite::Response,
+    http_response: ResponseContent,
     time: DateTime<Utc>,
 }
 
@@ -533,7 +531,7 @@ pub async fn handle_message(message: Message, connections: Arc<Mutex<Connections
             Some(data) => {
                 let r = TuiResponse {
                     addr: message.addr,
-                    http_response: bl {
+                    http_response: ResponseContent {
                         content: Some(message.response.to_string()),
                         format: ResponseFormat::Json,
                     },
@@ -546,7 +544,7 @@ pub async fn handle_message(message: Message, connections: Arc<Mutex<Connections
                     message.addr.ip(),
                     vec![TuiResponse {
                         addr: message.addr,
-                        http_response: bl {
+                        http_response: ResponseContent {
                             content: Some(message.response.to_string()),
                             format: ResponseFormat::Json,
                         },
@@ -560,7 +558,7 @@ pub async fn handle_message(message: Message, connections: Arc<Mutex<Connections
                 Some(data) => {
                     let r = TuiResponse {
                         addr: connection,
-                        http_response: bl {
+                        http_response: ResponseContent {
                             content: Some("Established Connection".to_string()),
                             format: ResponseFormat::None,
                         },
@@ -573,7 +571,7 @@ pub async fn handle_message(message: Message, connections: Arc<Mutex<Connections
                         connection.ip(),
                         vec![TuiResponse {
                             addr: connection,
-                            http_response: bl {
+                            http_response: ResponseContent {
                                 content: None,
                                 format: ResponseFormat::None,
                             },
