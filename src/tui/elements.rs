@@ -39,12 +39,13 @@ impl ListableItem for IpAddr {
 #[async_trait]
 /// Trait for defining an UIElement as a list
 pub trait UiList<'a, T: ListableItem>: UiElement {
-    fn new(&self, items: Arc<Mutex<Vec<T>>>, bounds: Rect, selected_item: usize) -> Self;
+    fn new(&self, items: Arc<Mutex<Vec<T>>>, bounds: Rect, current: bool, selected_item: usize) -> Self;
     async fn print(&self) -> Vec<StyledContent<String>>;
     fn bounds(&self) -> &Rect;
     fn get_selected_index(&self) -> usize;
 }
 
+#[derive(Debug)]
 pub struct AddressList<T>
 where
     T: ListableItem + Send + Sync
@@ -57,12 +58,12 @@ where
 
 #[async_trait]
 impl<'a, T: ListableItem + Send + Sync> UiList<'a, T> for AddressList<T> {
-    fn new(&self, items: Arc<Mutex<Vec<T>>>, bounds: Rect, selected_item: usize) -> Self {
+    fn new(&self, items: Arc<Mutex<Vec<T>>>, bounds: Rect, current: bool, selected_item: usize) -> Self {
         AddressList {
             bounds,
             list: items,
             selected_item,
-            current: false,
+            current,
         }
     }
     fn get_selected_index(&self) -> usize {
@@ -94,7 +95,7 @@ pub trait UiElement {
     fn bounds(&self) -> &Rect;
     fn is_current(&self) -> bool;
     async fn render(self, out: Out) -> anyhow::Result<()>;
-    fn get_header(&self) -> StyledContent<String>;
+    fn get_header(&self, current: bool) -> StyledContent<String>;
     fn get_next_line(&self, counter: u16) -> MoveTo{
         let bounds = self.bounds();
         let cols:u16 = bounds.cols.0 as u16;
@@ -117,7 +118,7 @@ impl<T: ListableItem + Sync + Send > UiElement for AddressList<T> {
         let buffer: Vec<StyledContent<String>> = UiList::print(&self).await;
         let mut out = out.lock().await;
         out.queue(self.get_next_line(0))?;
-        out.queue(PrintStyledContent(self.get_header()))?;
+        out.queue(PrintStyledContent(self.get_header(self.is_current())))?;
         for (line, content) in buffer.into_iter().enumerate() {
             out.queue(self.get_next_line(line as u16 + 1))?;
             out.queue(PrintStyledContent(content))?;
@@ -125,10 +126,10 @@ impl<T: ListableItem + Sync + Send > UiElement for AddressList<T> {
         Ok(())
     }
 
-    fn get_header(&self) -> StyledContent<String> {
+    fn get_header(&self, current: bool) -> StyledContent<String> {
         StyleVariants::get_styled_item(
-            format!("{:^len$}", "Adress", len = UiElement::bounds(self).width()),
-            StyleVariants::Header,
+            format!("{:^len$}", "Address", len = UiElement::bounds(self).width()),
+            StyleVariants::Header(current),
         )
     }
 }
@@ -141,15 +142,6 @@ impl<T: ListableItem + Send + Sync + Clone> AddressList<T> {
             bounds,
             selected_item,
         }
-    }
-    pub async fn get_selected_item(&self) -> Option<T> {
-        let list = &self.list.lock().await;
-        let item = list.get(self.get_selected_index());
-        match item {
-            Some(item) => return Some(item.clone()),
-            None => None
-        }
-
     }
 }
 
@@ -196,11 +188,11 @@ pub struct ConnectionsList<T: ListableItem + Sync + Send> {
 
 #[async_trait]
 impl<'a, T: ListableItem + Send + Sync> UiList<'a, T> for ConnectionsList<T> {
-    fn new(&self, items: Arc<Mutex<Vec<T>>>, bounds: Rect, selected_item: usize) -> Self {
+    fn new(&self, items: Arc<Mutex<Vec<T>>>, bounds: Rect, current: bool, selected_item: usize) -> Self {
         ConnectionsList {
             bounds,
             list: items,
-            current: false,
+            current,
             selected_item,
         }
     }
@@ -224,11 +216,12 @@ impl<T: ListableItem + Send + Sync> UiElement for ConnectionsList<T> {
     fn is_current(&self) -> bool {
         self.current
     }
+
     async fn render(self, out: Out) -> anyhow::Result<()> {
         let buffer = self.print().await;
         let mut out = out.lock().await;
         out.queue(self.get_next_line(0))?;
-        out.queue(PrintStyledContent(self.get_header()))?;
+        out.queue(PrintStyledContent(self.get_header(self.is_current())))?;
         for (line, content) in buffer.into_iter().enumerate() {
             out.queue(self.get_next_line(line as u16 + 1))?;
             out.queue(PrintStyledContent(content))?;
@@ -236,14 +229,14 @@ impl<T: ListableItem + Send + Sync> UiElement for ConnectionsList<T> {
 
         Ok(())
     }
-    fn get_header(&self) -> StyledContent<String> {
+    fn get_header(&self, current: bool) -> StyledContent<String> {
         StyleVariants::get_styled_item(
             format!(
                 "{:^len$}",
                 "Connections",
                 len = UiElement::bounds(self).width()
             ),
-            StyleVariants::Header,
+            StyleVariants::Header(current),
         )
     }
 }
@@ -270,5 +263,36 @@ impl<T: ListableItem + std::marker::Sync + std::marker::Send> ConnectionsList<T>
             current,
             selected_item,
         }
+    }
+}
+
+pub struct ProgramHeader<'a> {
+    pub bounds: &'a Rect,
+}
+
+#[async_trait]
+impl UiElement for ProgramHeader<'_> {
+    fn bounds(&self) ->  &Rect {
+        self.bounds
+        
+    }
+    async fn render(self, out: Out) -> anyhow::Result<()>{
+        let mut out = out.lock().await;
+        
+        out.queue(MoveTo(0, 0))?;
+        out.queue(PrintStyledContent(self.get_header(false)))?;
+        Ok(())
+    }
+    fn is_current(&self) -> bool {
+        false
+        
+    }
+    fn get_header(&self,_current:bool) -> StyledContent<String> {
+        let width = self.bounds().width();
+        StyleVariants::get_styled_item(format!("{:^width$}", "Testsuite"), StyleVariants::Title)
+        
+    }
+    fn get_next_line(&self,_counter:u16) -> MoveTo {
+        MoveTo(0,0)
     }
 }

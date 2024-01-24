@@ -3,17 +3,13 @@ use crossterm::style::*;
 #[allow(dead_code)]
 pub enum StyleVariants {
     Selected(bool),
-    Header,
+    Header(bool),
     Title,
 }
 
 impl StyleVariants {
     pub fn get_styled_item(text: String, style_variant: StyleVariants) -> StyledContent<String> {
-        let dark = Color::Rgb {
-            r: 0,
-            g: 0,
-            b: 170,
-        };
+        let dark = Color::Rgb { r: 0, g: 0, b: 170 };
         let light = Color::Rgb {
             r: 0,
             g: 170,
@@ -31,10 +27,13 @@ impl StyleVariants {
         };
         match style_variant {
             Self::Selected(selected) => match selected {
-                true => style(text).with(light).on(dark),
-                false => style(text).with(dark).on(light),
+                true => style(text).with(dark).on(light),
+                false => style(text).with(light).on(dark),
             },
-            Self::Header => style(text).with(header).on(dark),
+            Self::Header(current) => match current {
+                true => style(text).with(header).on(light),
+                false => style(text).with(header).on(dark),
+            },
             Self::Title => style(text).with(white).on(dark),
         }
     }

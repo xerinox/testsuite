@@ -18,14 +18,14 @@ use testsuite::ResponseFormat;
 
 use testsuite::Message;
 
+#[derive(Debug)]
 pub struct TuiState {
-    pub cursor: (u16, u16),
     /// (cols, rows)
     pub window_size: Rect,
     pub connections: Arc<Mutex<Connections>>,
     pub connections_cache: Connections,
     pub needs_update: bool,
-    pub selected: (Select, Select),
+    history: History,
     screen: Screen,
     pub prompt: String,
 }
@@ -73,19 +73,46 @@ impl Rect {
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Select {
-    Addr(Option<usize>),
-    Member(Option<usize>),
+    Addr(usize),
+    Member(usize),
+}
+
+#[derive(Debug)]
+pub struct History {
+    pub current: (Screen, Select),
+    prev: Vec<(Screen, Select)>,
+}
+
+impl History {
+    pub fn peek_prev(&self) -> Option<&(Screen, Select)> {
+        if self.prev.len() < 1 {
+            None
+        } else {
+            self.prev.last()
+        }
+    }
+    pub fn pop(&mut self) {
+        if let Some(prev) = self.prev.pop() {
+            self.current = prev;
+        } else {
+            self.current = (Screen::List, Select::Addr(0));
+        }
+    }
+    pub fn push(&mut self, new: (Screen, Select)) {
+        self.prev.push(self.current);
+        self.current = new;
+    }
 }
 
 impl Select {
     pub fn select(&mut self, value: Option<usize>, max_value: usize) {
         let parsed_value;
         if max_value == 0 {
-            parsed_value = Some(0);
+            parsed_value = 0;
         } else {
             parsed_value = match value {
-                Some(value) => Some(value.clamp(0, max_value)),
-                _ => None,
+                Some(value) => value.clamp(0, max_value),
+                _ => 0,
             };
         }
 
@@ -98,48 +125,29 @@ impl Select {
     #[allow(dead_code)]
     pub fn has_same_value(self, value: usize) -> bool {
         match self {
-            Self::Addr(val) => match val {
-                None => false,
-                Some(inner) => return inner == value,
-            },
-            Self::Member(val) => match val {
-                None => false,
-                Some(inner) => return inner == value,
-            },
+            Self::Addr(inner) => {
+                return inner == value;
+            }
+            Self::Member(inner) => {
+                return inner == value;
+            }
         }
     }
 
-    pub fn sub(self, subtract: usize) -> Self {
-        match self {
-            Self::Addr(val) => match val {
-                Some(value) => Self::Addr(Some(value.checked_sub(subtract).unwrap_or(0))),
-                None => Self::Addr(None),
+    pub fn sub(&mut self, subtract: usize){
+        *self = match &self {
+            Self::Addr(value) => {
+                Self::Addr(value.checked_sub(subtract).unwrap_or(0))
             },
-            Self::Member(val) => match val {
-                Some(value) => Self::Member(Some(value.checked_sub(subtract).unwrap_or(0))),
-                None => Self::Member(None),
+            Self::Member(value) => {
+                Self::Member(value.checked_sub(subtract).unwrap_or(0))
             },
         }
     }
-    pub fn add(self, add: usize) -> Self {
-        match self {
-            Self::Addr(value) => match value {
-                Some(value) => Self::Addr(Some(value.checked_add(add).unwrap_or(usize::MAX))),
-                None => Self::Addr(Some(0)),
-            },
-            Self::Member(value) => match value {
-                Some(value) => Self::Member(Some(value.checked_add(add).unwrap_or(usize::MAX))),
-                None => Self::Member(None),
-            },
-        }
-    }
-}
-
-impl Into<Option<usize>> for Select {
-    fn into(self) -> Option<usize> {
-        match self {
-            Self::Addr(value) => value,
-            Self::Member(value) => value,
+    pub fn add(&mut self, add: usize, max_value: usize){
+        *self = match self {
+            Self::Addr(value) => Self::Addr(value.checked_add(add).unwrap_or(usize::MAX).clamp(0,max_value)),
+            Self::Member(value) => Self::Member(value.checked_add(add).unwrap_or(usize::MAX).clamp(0, max_value)),
         }
     }
 }
@@ -147,9 +155,14 @@ impl Into<Option<usize>> for Select {
 impl Into<usize> for Select {
     fn into(self) -> usize {
         match self {
-            Self::Addr(value) => value.unwrap_or(0),
-            Self::Member(value) => value.unwrap_or(0),
+            Self::Addr(value) => value,
+            Self::Member(value) => value,
         }
+    }
+}
+impl Into<usize> for &Select {
+    fn into(self) -> usize {
+        <Select as Into<usize>>::into(*self)
     }
 }
 
@@ -159,8 +172,6 @@ impl TuiState {
         let window_size = crossterm::terminal::size().expect("window has a size");
 
         TuiState {
-            selected: (Select::Addr(None), Select::Member(None)),
-            cursor: (2, 1),
             window_size: Rect {
                 cols: (1, window_size.0.into()),
                 rows: (1, window_size.1.into()),
@@ -168,6 +179,10 @@ impl TuiState {
             connections: Arc::clone(&connections),
             needs_update: false,
             connections_cache: TuiState::cache(connections).await,
+            history: History {
+                current: (Screen::List, Select::Addr(0)),
+                prev: vec![],
+            },
             screen: Screen::List,
             prompt: String::new(),
         }
@@ -196,60 +211,116 @@ impl TuiState {
             ))?;
             out.queue(crossterm::cursor::MoveTo(0, 0))?;
         }
+        {
+            let out = Arc::clone(&out);
+            let header = ProgramHeader {
+                bounds: &Rect {
+                    cols: (0, self.window_size.cols.1),
+                    rows: (0, 0)
+                },
+            };
+            header.render(out).await?;
+        }
 
         {
-            let address_list_bounds = Rect {
-                cols: (0, self.window_size.cols.1.checked_div(3).unwrap_or(10)),
-                rows: (0, self.window_size.rows.1),
-            };
+            match self.history.current {
+                (Screen::List, selected_address) => {
+                    let address_list_bounds = Rect {
+                        cols: (0, self.window_size.cols.1),
+                        rows: (1, self.window_size.rows.1),
+                    };
 
-            let connection_list_bounds = Rect {
-                cols: (address_list_bounds.width()+1, self.window_size.cols.1),
-                rows: (0, self.window_size.rows.1)
-            };
+                    let addresses = Arc::from(Mutex::new(
+                        self.connections_cache
+                            .keys()
+                            .map(|x| x.clone())
+                            .collect_vec(),
+                    ));
 
-            let addresses = Arc::from(Mutex::new(self.connections_cache.keys().map(|x| x.clone()).collect_vec()));
-            let selected_item:usize = self.selected.0.into();
-            let selected_item = selected_item.checked_sub(1).unwrap_or(0);
+                    let address_list = AddressList::default(
+                        address_list_bounds,
+                        addresses,
+                        true,
+                        selected_address.into(),
+                    );
 
-            let address_list = AddressList::default(
-                address_list_bounds,
-                addresses,
-                
-                true,
-                selected_item
-            );
+                    {
+                        let out = Arc::clone(&out);
+                        address_list
+                            .render({
+                                let out = Arc::clone(&out);
+                                out
+                            })
+                            .await?;
+                    }
+                }
+                (Screen::Details, selected_detail) => {
+                    let address_list_bounds = Rect {
+                        cols: (0, self.window_size.cols.1.checked_div(3).unwrap_or(10)),
+                        rows: (1, self.window_size.rows.1),
+                    };
 
-            let mut connection_list_items : Vec<TuiResponse> = vec![];
-            if let Some(selected_item) = &address_list.get_selected_item().await{
-                if let Some(items) = self.connections_cache.get(selected_item) {
-                    for item in items.into_iter() {
-                        connection_list_items.push(item.to_owned())
+                    let connection_list_bounds = Rect {
+                        cols: (address_list_bounds.width(), self.window_size.cols.1),
+                        rows: (1, self.window_size.rows.1),
+                    };
+
+                    let mut connection_list_items: Vec<TuiResponse> = vec![];
+
+
+                    if let Some((_, address)) = self.history.peek_prev() {
+                        if let Select::Addr(address) = address {
+                            let addresses = Arc::from(Mutex::new(
+                                self.connections_cache
+                                    .keys()
+                                    .map(|x| x.clone())
+                                    .collect_vec(),
+                            ));
+
+                            let address_list = AddressList::default(
+                                address_list_bounds,
+                                addresses,
+                                false,
+                                *address,
+                            );
+
+                            {
+                                let out = Arc::clone(&out);
+                                address_list
+                                    .render({
+                                        let out = Arc::clone(&out);
+                                        out
+                                    })
+                                    .await?;
+                            }
+                            if let Some((_, items)) = self.connections_cache.get_index(*address) {
+                                for item in items.into_iter() {
+                                    connection_list_items.push(item.to_owned())
+                                }
+                            }
+                        }
+                    }
+
+                    let connection_list = ConnectionsList::default(
+                        Arc::from(Mutex::from(connection_list_items)),
+                        connection_list_bounds,
+                        true,
+                        selected_detail.into(),
+                    );
+
+                    {
+                        connection_list
+                            .render({
+                                let out = Arc::clone(&out);
+                                out
+                            })
+                            .await?;
                     }
                 }
             }
-
-            let connection_list_ref = Arc::from(Mutex::new(connection_list_items));
-            let selected_item:usize = self.selected.1.into();
-            let selected_item = selected_item.checked_sub(1).unwrap_or(0);
-                
-               
-
-            let connection_list = ConnectionsList::default(
-                connection_list_ref,
-                connection_list_bounds,
-                false,
-                selected_item
-                );
-            {    
-                let out = Arc::clone(&out);
-                address_list.render({let out = Arc::clone(&out); out}).await?;
-                connection_list.render({let out = Arc::clone(&out); out}).await?;
-            }
         }
-        let mut out = out.lock().await;
 
-        out.queue(crossterm::cursor::MoveTo(self.cursor.0, self.cursor.1))?;
+        let mut out = out.lock().await;
 
         out.flush()?;
         Ok(())
@@ -259,61 +330,29 @@ impl TuiState {
         self.screen = screen
     }
 
-    fn select(&mut self, id: usize, max_value: usize) {
-        match self.screen {
-            Screen::List => {
-                self.selected.0.select(Some(id), max_value)
-            },
-            Screen::Details => {
-                self.selected.1.select(Some(id), max_value)
-            }
-        }
-    }
-
-    fn get_select(&self) -> Select {
-        match self.screen {
-            Screen::List => {
-                self.selected.0
+    fn get_max_select_size(&self) -> usize {
+        match self.history.current.0 {
+            Screen::List => match self.connections_cache.is_empty() {
+                true => 0,
+                false => self.connections_cache.len().checked_sub(1).unwrap_or(0),
             },
 
             Screen::Details => {
-                self.selected.1
-            }
-        }
-    }
-
-    fn get_max_select_size(&self) -> Option<usize>{
-        match self.screen {
-            Screen::List => {
-                match self.connections_cache.is_empty() {
-                    true => None,
-                    false => Some(self.connections_cache.len())
-                }
-            },
-
-            Screen::Details => {
-                let selected_connection:usize = self.selected.0.into();
-                if let Some(details) = self.connections_cache.get_index(selected_connection){
-                    match details.1.is_empty() {
-                        false => {
-                            Some(details.1.len())
-                        },
-                        true => {
-                            Some(selected_connection)
+                if let Some((_, addr)) = self.history.peek_prev() {
+                    if let Some(details) = self.connections_cache.get_index(addr.into()) {
+                        match details.1.is_empty() {
+                            false => details.1.len().checked_sub(1).unwrap_or(0),
+                            true => 0,
                         }
+                    } else {
+                        0
                     }
                 } else {
-                    None
+                    0
                 }
             }
         }
     }
-}
-
-#[derive(PartialEq, Debug)]
-enum Direction {
-    Up,
-    Down,
 }
 
 pub async fn parse_cli_event(
@@ -322,8 +361,6 @@ pub async fn parse_cli_event(
     tuistate: Arc<Mutex<TuiState>>,
     exit_reason: &mut Option<String>,
 ) -> anyhow::Result<()> {
-    let mut moved: Option<Direction> = None;
-    let mut changed_state: Option<Screen> = None;
     if let Some(event) = event {
         let mut out = out.lock().await;
         match event {
@@ -334,26 +371,30 @@ pub async fn parse_cli_event(
                         *exit_reason = Some("Pressed ctrl+q".to_string());
                     }
                     (KeyCode::Up, KeyModifiers::NONE) => {
-                        //out.queue(crossterm::cursor::MoveUp(1))?;
-                        moved = Some(Direction::Up);
+                        let mut tuistate = tuistate.lock().await;
+                        tuistate.history.current.1.sub(1);
                     }
                     (KeyCode::Down, KeyModifiers::NONE) => {
-                        //out.queue(crossterm::cursor::MoveDown(1))?;
-                        moved = Some(Direction::Down);
+                        let mut tuistate = tuistate.lock().await;
+                        let max_select_size = tuistate.get_max_select_size();
+                        tuistate.history.current.1.add(1, max_select_size);
+
                     }
-                    (KeyCode::Right, KeyModifiers::NONE) => {
-                        //out.queue(crossterm::cursor::MoveRight(1))?;
-                        //moved = (0, 1);
-                    }
-                    (KeyCode::Left, KeyModifiers::NONE) => {
-                        //out.queue(crossterm::cursor::MoveLeft(1))?;
-                        //moved = (0, -1);
-                    }
+                    (KeyCode::Right, KeyModifiers::NONE) => {}
+                    (KeyCode::Left, KeyModifiers::NONE) => {}
                     (KeyCode::Enter, KeyModifiers::NONE) => {
-                        changed_state = Some(Screen::Details);
+                        let mut tuistate = tuistate.lock().await;
+                        match tuistate.history.current.0 {
+                            Screen::List => {
+                                tuistate.history.push((Screen::Details, Select::Addr(0)));
+                            }
+                            Screen::Details => {
+                                todo!();
+                            }
+                        }
                     }
                     (KeyCode::Esc, KeyModifiers::NONE) => {
-                        changed_state = Some(Screen::List);
+                        tuistate.lock().await.history.pop();
                     }
                     _ => {
                         out.write(format!("Got letter: {key:?}").as_bytes())?;
@@ -370,29 +411,6 @@ pub async fn parse_cli_event(
                     rows: (0, rows.into()),
                 };
             }
-        }
-    }
-
-    if let Some(new_state) = changed_state {
-        tuistate.lock().await.screen = new_state;
-    }
-
-    {
-        if moved != None {
-            let mut tuistate = tuistate.lock().await;
-            let max_select = tuistate.get_max_select_size();
-            let new_selected= match moved {
-                Some(Direction::Up) => {
-                    tuistate.get_select().sub(1)
-                },
-                Some(Direction::Down) => {
-                    tuistate.get_select().add(1)
-                },
-                _ => {
-                    tuistate.get_select()
-                },
-            };
-            tuistate.select(new_selected.into(), max_select.unwrap_or(0));
         }
     }
     let out = Arc::clone(&out);

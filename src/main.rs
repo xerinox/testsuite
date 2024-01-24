@@ -1,5 +1,5 @@
 use anyhow::Result;
-use crossterm::event::EventStream;
+use crossterm::{event::EventStream, execute};
 use crossterm::QueueableCommand;
 use futures::FutureExt;
 use std::net::IpAddr;
@@ -67,6 +67,9 @@ async fn main() -> Result<(), anyhow::Error> {
         }
     });
 
+    execute!(stdout(),
+    crossterm::cursor::Hide
+    )?;
     let stdout = stdout();
     let out = Arc::from(Mutex::from(stdout));
     enable_raw_mode()?;
