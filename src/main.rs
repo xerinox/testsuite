@@ -11,7 +11,6 @@ use indexmap::IndexMap;
 use tokio::sync::mpsc::channel;
 mod tui;
 use clap::Parser;
-use colored::Colorize;
 use std::io::stdout;
 use testsuite::{populate_map, Arguments, Message, ResponseContent};
 use tui::{TuiResponse, *};
@@ -60,8 +59,8 @@ async fn main() -> Result<(), anyhow::Error> {
                     push_message(sender, Message::ConnectionFailed).await;
                     eprintln!(
                         "{} {}",
-                        "Error handling connection:".red(),
-                        err.to_string().red()
+                        "Error handling connection:",
+                        err.to_string()
                     );
                 }
             }

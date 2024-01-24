@@ -1,6 +1,5 @@
 use clap::{Args, Parser};
 use anyhow::Result;
-use colored::Colorize;
 use nanohttp::Response;
 use serde::Serialize;
 use indexmap::IndexMap;
@@ -148,7 +147,7 @@ impl ResponseContent {
             content: match path.exists() {
                 true => Some(fs::read_to_string(path).expect("File is unreadable")),
                 false => {
-                    eprintln!("{}", format!("Could not find file: {:}, continuing with blank response", path.to_str().expect("Path is unparseable")).yellow());
+                    eprintln!("{}", format!("Could not find file: {:}, continuing with blank response", path.to_str().expect("Path is unparseable")));
                     None
                 }
             },
@@ -185,7 +184,7 @@ impl ResponseContent {
                             Some(some)
                         },
                         Err(e) => {
-                            eprintln!("{}", format!("Error: could not read directory: {:?}", e).red());
+                            eprintln!("{}", format!("Error: could not read directory: {:?}", e));
                             None
                         }
                     }).filter_map(|file| {
@@ -206,11 +205,11 @@ impl ResponseContent {
                                     Some((ResponseFormat::Html, file.path()))
                                 },
                                 (_, Some(_)) => {
-                                    eprintln!("{}", format!("File: {} does not have a valid extension [html, json]", file.path().to_str()?).yellow());
+                                    eprintln!("{}", format!("File: {} does not have a valid extension [html, json]", file.path().to_str()?));
                                     None
                                 },
                                 (Some(_), None) => {
-                                    eprintln!("{}", format!("File: {} does not have a file name for use in endpoint generation", file.path().to_str()?).yellow());
+                                    eprintln!("{}", format!("File: {} does not have a file name for use in endpoint generation", file.path().to_str()?));
                                     None
                                 },
                                 _ => {
@@ -218,7 +217,7 @@ impl ResponseContent {
                                 }
                             }
                         } else {
-                            eprintln!("{}", format!("File: {} does not have an extension, valid extensions are [html, json]", file.path().to_str()?).yellow());
+                            eprintln!("{}", format!("File: {} does not have an extension, valid extensions are [html, json]", file.path().to_str()?));
                             None
                         }
 
