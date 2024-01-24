@@ -4,7 +4,7 @@ use anyhow::Result;
 use nanohttp::{Method, Request as HttpRequest, Response as HttpResponse, Status};
 use std::net::SocketAddr;
 use std::str::from_utf8;
-use std::{sync::Arc};
+use std::sync::Arc;
 use indexmap::IndexMap;
 use testsuite::ResponseMessage;
 use tokio::sync::mpsc;

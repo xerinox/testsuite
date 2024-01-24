@@ -4,10 +4,8 @@ pub mod style;
 
 use chrono::Utc;
 use crossterm;
-use crossterm::cursor::{MoveTo, MoveToNextLine};
 use crossterm::event::Event;
 use crossterm::event::{KeyCode, KeyModifiers};
-use crossterm::style::Print;
 use crossterm::QueueableCommand;
 use elements::*;
 use futures::lock::Mutex;
@@ -54,6 +52,7 @@ pub struct Rect {
     rows: (usize, usize),
 }
 
+#[allow(dead_code)]
 impl Rect {
     pub fn new<T>(cols: (T, T), rows: (T, T)) -> Rect
     where
@@ -96,6 +95,7 @@ impl Select {
         }
     }
 
+    #[allow(dead_code)]
     pub fn has_same_value(self, value: usize) -> bool {
         match self {
             Self::Addr(val) => match val {
@@ -233,11 +233,6 @@ impl TuiState {
             let selected_item:usize = self.selected.1.into();
             let selected_item = selected_item.checked_sub(1).unwrap_or(0);
                 
-            {
-                let mut out = out.lock().await;
-                out.queue(crossterm::cursor::MoveTo(10, 10))?;
-                out.queue(Print(format!("{:?}", self.selected)))?;
-            }
                
 
             let connection_list = ConnectionsList::default(

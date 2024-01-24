@@ -1,5 +1,6 @@
 use crossterm::style::*;
 
+#[allow(dead_code)]
 pub enum StyleVariants {
     Selected(bool),
     Header,

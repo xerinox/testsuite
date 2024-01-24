@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use crossterm::cursor::MoveTo;
-use crossterm::style::{Print, PrintStyledContent};
+use crossterm::style::PrintStyledContent;
 use crossterm::QueueableCommand;
 use crossterm::style::StyledContent;
 
@@ -251,14 +251,14 @@ impl<T: ListableItem + std::marker::Sync + std::marker::Send> ConnectionsList<T>
     async fn create_member_list(
         &self,
         groups: Arc<Mutex<Vec<T>>>,
-        _selectedgroup: usize,
+        selectedgroup: usize,
     ) -> Vec<StyledContent<String>> {
         groups.lock().await
             .iter()
             .enumerate()
             .take(UiElement::bounds(self).height())
             .map(|(index, item)| {
-                item.print(self.selected_item == index, UiList::bounds(self).width())
+                item.print(selectedgroup == index, UiList::bounds(self).width())
             })
             .collect()
     }

@@ -1,7 +1,7 @@
 use clap::{Args, Parser};
 use anyhow::Result;
 use colored::Colorize;
-use nanohttp::{Response as HttpResponse, Method, Status};
+use nanohttp::Response;
 use serde::Serialize;
 use indexmap::IndexMap;
 use std::{error::Error, fmt::Display, fs, path::PathBuf, str::FromStr, net::SocketAddr};
@@ -60,11 +60,11 @@ pub enum Message {
 #[derive(Debug)]
 pub struct ResponseMessage {
     pub addr: SocketAddr,
-    pub response: HttpResponse,
+    pub response: Response,
 }
 
 impl ResponseMessage {
-    pub fn new(addr: SocketAddr, response: &HttpResponse) -> Self {
+    pub fn new(addr: SocketAddr, response: &Response) -> Self {
         ResponseMessage {
             addr,
             response: response.clone()
