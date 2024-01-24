@@ -26,7 +26,7 @@ Options:
           Print version
 ```
 
-#TUI 
+# TUI 
 Contains two views, address list (incoming connection IPs) and details list, showing each connection in more detail.
 Trying to press enter on a detail will panic with todo.
 
