@@ -1,13 +1,15 @@
 use crate::Connections;
-pub mod elements;
-use elements::*;
-use chrono::{DateTime, Utc};
+mod elements;
+pub mod style;
+
+use chrono::Utc;
 use crossterm;
 use crossterm::event::Event;
 use crossterm::event::{KeyCode, KeyModifiers};
-use crossterm::style::Print;
 use crossterm::QueueableCommand;
+use elements::*;
 use futures::lock::Mutex;
+use itertools::Itertools;
 use std::io::{Stdout, Write};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -19,11 +21,11 @@ use testsuite::Message;
 pub struct TuiState {
     pub cursor: (u16, u16),
     /// (cols, rows)
-    pub window_size: (u16, u16),
+    pub window_size: Rect,
     pub connections: Arc<Mutex<Connections>>,
     pub connections_cache: Connections,
     pub needs_update: bool,
-    pub selected: (usize, usize),
+    pub selected: (Select, Select),
     pub screen: Screen,
     pub prompt: String,
 }
@@ -68,15 +70,99 @@ impl Rect {
     }
 }
 
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum Select {
+    Addr(Option<usize>),
+    Member(Option<usize>),
+}
+
+impl Select {
+    pub fn select(&mut self, value: Option<usize>, max_value: usize) {
+        let parsed_value;
+        if max_value == 0 {
+            parsed_value = Some(0);
+        } else {
+            parsed_value = match value {
+                Some(value) => Some(value.clamp(0, max_value)),
+                _ => None,
+            };
+        }
+
+        match &self {
+            Self::Addr(_) => *self = Self::Addr(parsed_value),
+            Self::Member(_) => *self = Self::Member(parsed_value),
+        }
+    }
+
+    pub fn has_same_value(self, value: usize) -> bool {
+        match self {
+            Self::Addr(val) => match val {
+                None => false,
+                Some(inner) => return inner == value,
+            },
+            Self::Member(val) => match val {
+                None => false,
+                Some(inner) => return inner == value,
+            },
+        }
+    }
+
+    pub fn sub(self, subtract: usize) -> Self {
+        match self {
+            Self::Addr(val) => match val {
+                Some(value) => Self::Addr(Some(value.checked_sub(subtract).unwrap_or(0))),
+                None => Self::Addr(None),
+            },
+            Self::Member(val) => match val {
+                Some(value) => Self::Member(Some(value.checked_sub(subtract).unwrap_or(0))),
+                None => Self::Member(None),
+            },
+        }
+    }
+    pub fn add(self, add: usize) -> Self {
+        match self {
+            Self::Addr(value) => match value {
+                Some(value) => Self::Addr(Some(value.checked_add(add).unwrap_or(usize::MAX))),
+                None => Self::Addr(Some(0)),
+            },
+            Self::Member(value) => match value {
+                Some(value) => Self::Member(Some(value.checked_add(add).unwrap_or(usize::MAX))),
+                None => Self::Member(None),
+            },
+        }
+    }
+}
+
+impl Into<Option<usize>> for Select {
+    fn into(self) -> Option<usize> {
+        match self {
+            Self::Addr(value) => value,
+            Self::Member(value) => value,
+        }
+    }
+}
+
+impl Into<usize> for Select {
+    fn into(self) -> usize {
+        match self {
+            Self::Addr(value) => value.unwrap_or(0),
+            Self::Member(value) => value.unwrap_or(0),
+        }
+    }
+}
 
 #[allow(dead_code)]
 impl TuiState {
     pub async fn new(connections: Arc<Mutex<Connections>>) -> Self {
         let window_size = crossterm::terminal::size().expect("window has a size");
+
         TuiState {
-            selected: (0, 0),
+            selected: (Select::Addr(None), Select::Member(None)),
             cursor: (2, 1),
-            window_size,
+            window_size: Rect {
+                cols: (1, window_size.0.into()),
+                rows: (1, window_size.1.into()),
+            },
             connections: Arc::clone(&connections),
             needs_update: false,
             connections_cache: TuiState::cache(connections).await,
@@ -106,37 +192,52 @@ impl TuiState {
                 crossterm::terminal::ClearType::All,
             ))?;
             out.queue(crossterm::cursor::MoveTo(0, 0))?;
-            out.queue(crossterm::cursor::MoveToNextLine(1))?;
         }
 
         {
-            let out = Arc::clone(&out);
-            let mut cl = ConnectionList::default(
-                &self.connections_cache,
-                Rect::new((0, self.window_size.0), (0, self.window_size.1)),
-                self.selected,
-                self.screen,
+            let address_list_bounds = Rect {
+                cols: (0, self.window_size.cols.1.checked_div(3).unwrap_or(10)),
+                rows: (0, self.window_size.rows.1),
+            };
+            let connection_list_bounds = Rect {
+                cols: (address_list_bounds.width()+1, self.window_size.cols.1),
+                rows: (0, self.window_size.rows.1)
+            };
+            let addresses = Arc::from(Mutex::new(self.connections_cache.keys().map(|x| x.clone()).collect_vec()));
+
+            let address_list = AddressList::default(
+                address_list_bounds,
+                addresses,
+                
+                true,
+                self.selected.0.into(),
             );
-            if let Err(e) = cl
-                .render({
-                    let out = Arc::clone(&out);
-                    out
-                })
-                .await
-            {
-                println!("{e:?}");
-            } else {
-                self.selected = cl.selected();
+            let mut connection_list_items : Vec<TuiResponse> = vec![];
+            if let Some(items) = self.connections_cache.get(&address_list.get_selected_item().await) {
+                for item in items.into_iter() {
+                    connection_list_items.push(item.to_owned())
+                }
             }
+
+            let connection_list_ref = Arc::from(Mutex::new(connection_list_items));
+            let selected_item = self.selected.1.into();
+               
+
+            let connection_list = ConnectionsList::default(
+                connection_list_ref,
+                connection_list_bounds,
+                false,
+                selected_item
+                );
+                
+            let out = Arc::clone(&out);
+            address_list.render({let out = Arc::clone(&out); out});
+            connection_list.render({let out = Arc::clone(&out); out});
+
         }
         let out = Arc::clone(&out);
         let mut out = out.lock().await;
 
-        out.queue(crossterm::cursor::MoveTo(0, self.window_size.1 - 2))?;
-        out.queue(Print(format!(
-            "Selected item: {}, {}, cursor pos: {}, {}",
-            self.selected.0, self.selected.1, self.cursor.0, self.cursor.1
-        )))?;
         out.queue(crossterm::cursor::MoveTo(self.cursor.0, self.cursor.1))?;
 
         out.flush()?;
@@ -144,7 +245,7 @@ impl TuiState {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 enum Direction {
     Up,
     Down,
@@ -199,7 +300,10 @@ pub async fn parse_cli_event(
             Event::Mouse(_) => {}
             Event::Paste(_) => {}
             Event::Resize(cols, rows) => {
-                tuistate.lock().await.window_size = (cols, rows);
+                tuistate.lock().await.window_size = Rect {
+                    cols: (0, cols.into()),
+                    rows: (0, rows.into()),
+                };
             }
         }
     }
@@ -224,30 +328,10 @@ pub async fn parse_cli_event(
             }
 
             let new_selected = match moved {
-                (Some(Direction::Up), None) => (
-                    tuistate.selected.0.checked_sub(1).unwrap_or(0),
-                    tuistate.selected.1,
-                ),
-                (None, Some(Direction::Up)) => (
-                    tuistate.selected.0,
-                    tuistate.selected.1.checked_sub(1).unwrap_or(0),
-                ),
-                (Some(Direction::Down), None) => (
-                    tuistate
-                        .selected
-                        .0
-                        .checked_add(1)
-                        .unwrap_or(tuistate.window_size.1.into()),
-                    tuistate.selected.1,
-                ),
-                (None, Some(Direction::Down)) => (
-                    tuistate.selected.1,
-                    tuistate
-                        .selected
-                        .1
-                        .checked_add(1)
-                        .unwrap_or(tuistate.window_size.1.into()),
-                ),
+                (Some(Direction::Up), None) => (tuistate.selected.0.sub(1), tuistate.selected.1),
+                (Some(Direction::Down), None) => (tuistate.selected.0.add(1), tuistate.selected.1),
+                (None, Some(Direction::Up)) => (tuistate.selected.0, tuistate.selected.1.sub(1)),
+                (None, Some(Direction::Down)) => (tuistate.selected.0, tuistate.selected.1.add(1)),
                 (None, None) => tuistate.selected,
                 _ => panic!("Do not support diagonally"),
             };
@@ -264,7 +348,7 @@ pub async fn parse_cli_event(
 pub struct TuiResponse {
     addr: SocketAddr,
     http_response: ResponseContent,
-    time: DateTime<Utc>,
+    time: String,
 }
 
 pub async fn handle_message(message: Message, connections: Arc<Mutex<Connections>>) {
@@ -277,9 +361,9 @@ pub async fn handle_message(message: Message, connections: Arc<Mutex<Connections
                     addr: message.addr,
                     http_response: ResponseContent {
                         content: Some(message.response.to_string()),
-                        format: ResponseFormat::Json,
+                        format: ResponseFormat::Json.to_string(),
                     },
-                    time: Utc::now(),
+                    time: Utc::now().to_rfc3339(),
                 };
                 data.push(r)
             }
@@ -290,9 +374,9 @@ pub async fn handle_message(message: Message, connections: Arc<Mutex<Connections
                         addr: message.addr,
                         http_response: ResponseContent {
                             content: Some(message.response.to_string()),
-                            format: ResponseFormat::Json,
+                            format: ResponseFormat::Json.to_string(),
                         },
-                        time: Utc::now(),
+                        time: Utc::now().to_rfc3339(),
                     }],
                 );
             }
@@ -304,9 +388,9 @@ pub async fn handle_message(message: Message, connections: Arc<Mutex<Connections
                         addr: connection,
                         http_response: ResponseContent {
                             content: Some("Established Connection".to_string()),
-                            format: ResponseFormat::None,
+                            format: ResponseFormat::None.to_string(),
                         },
-                        time: Utc::now(),
+                        time: Utc::now().to_rfc3339(),
                     };
                     data.push(r);
                 }
@@ -317,9 +401,9 @@ pub async fn handle_message(message: Message, connections: Arc<Mutex<Connections
                             addr: connection,
                             http_response: ResponseContent {
                                 content: None,
-                                format: ResponseFormat::None,
+                                format: ResponseFormat::None.to_string(),
                             },
-                            time: Utc::now(),
+                            time: Utc::now().to_rfc3339(),
                         }],
                     );
                 }

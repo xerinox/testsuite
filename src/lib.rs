@@ -71,7 +71,6 @@ impl ResponseMessage {
     }
 }
 
-
 impl ToString for ResponseFormat {
     fn to_string(&self) -> String {
         match *self {
@@ -100,6 +99,7 @@ impl FromStr for ResponseFormat {
         match s.to_ascii_lowercase().as_str() {
             "json" => Ok(ResponseFormat::Json),
             "html" => Ok(ResponseFormat::Html),
+            "" => Ok(ResponseFormat::None),
             _ => Err(ResponseFormatError::ParseFailedError(s.to_owned())),
         }
     }
@@ -108,7 +108,7 @@ impl FromStr for ResponseFormat {
 #[derive(Default,Clone, Debug)]
 pub struct ResponseContent {
     pub content: Option<String>,
-    pub format: ResponseFormat,
+    pub format: String,
 }
 
 impl ToString for ResponseContent {
@@ -137,7 +137,7 @@ impl ResponseContent {
     pub fn from_content(content: &str, response_format: &ResponseFormat) -> ResponseContent {
         ResponseContent {
             content: Some(String::from(content)),
-            format: response_format.clone(),
+            format: response_format.to_string(),
         }
     }
 
@@ -151,7 +151,7 @@ impl ResponseContent {
                     None
                 }
             },
-            format: response_format.clone(),
+            format: response_format.to_string(),
         }
     }
 
@@ -165,7 +165,7 @@ impl ResponseContent {
         } else {
             return ResponseContent {
                 content: None,
-                format: response_format.clone(),
+                format: response_format.to_string(),
             };
         }
     }

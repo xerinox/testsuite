@@ -1,276 +1,285 @@
-use core::cmp::Ordering;
-use itertools::Itertools;
+use async_trait::async_trait;
+use crossterm::QueueableCommand;
+use crossterm::style::Print;
+use crossterm::style::StyledContent;
 
-use crate::tui::{Rect, TuiResponse, Screen};
-use colored::{ColoredString, Colorize};
-use crate::Connections;
+use crate::tui::{style::StyleVariants, Rect, TuiResponse};
 use std::net::IpAddr;
 
 use futures::lock::Mutex;
-use std::sync::Arc;
 use std::io::Stdout;
-use crossterm::{
-    cursor::MoveTo,
-    QueueableCommand,
-    style::Print};
+use std::sync::Arc;
 
 type Out = Arc<Mutex<Stdout>>;
 
-#[derive(Debug)]
-pub struct ConnectionList<'a> {
-    groups: Vec<ConnectionListGroup<'a>>,
-    selected: (usize, usize),
-    address_list_bounds: Rect,
-    details_list_bounds: Rect,
-    window_size: Rect,
-    screen: Screen,
+pub trait ListableItem {
+    fn print(&self, is_selected: bool, max_length: usize) -> StyledContent<String>;
 }
 
-impl<'a> ConnectionList<'a> {
-    pub fn default(
-        groups: &Connections,
-        window_size: Rect,
-        selected: (usize, usize),
-        screen: Screen,
-    ) -> ConnectionList {
-        let connection_list_bounds = Rect {
-            rows: (window_size.rows.0, window_size.rows.1),
-            cols: (window_size.cols.0, window_size.cols.1),
-        };
-
-        let addr_list_length: usize = connection_list_bounds.width().checked_div(3).unwrap_or(0);
-
-        let (address_list_bounds, details_list_bounds): (Rect, Rect) = (
-            Rect::new((1, addr_list_length), (1, connection_list_bounds.rows.1)),
-            Rect::new(
-                (addr_list_length + 1, connection_list_bounds.cols.1),
-                (1, connection_list_bounds.rows.1),
+impl ListableItem for IpAddr {
+    fn print(&self, is_selected: bool, max_length: usize) -> StyledContent<String> {
+        match is_selected {
+            true => StyleVariants::get_styled_item(
+                format!("{:max_length$.max_length$}", self.to_string()),
+                StyleVariants::Selected(true),
             ),
-        );
-
-        let groups: Vec<ConnectionListGroup> = groups
-            .iter()
-            .map(|(host, lines)| ConnectionListGroup {
-                host,
-                lines: lines
-                    .iter()
-                    .map(|response| ConnectionListGroupLine { response })
-                    .collect(),
-            })
-            .collect();
-
-        let selected = (selected.0.max(0), selected.1.max(0));
-
-        ConnectionList {
-            address_list_bounds,
-            details_list_bounds,
-            window_size,
-            selected,
-            groups,
-            screen,
+            false => StyleVariants::get_styled_item(
+                format!("{:max_length$.max_length$}", self.to_string()),
+                StyleVariants::Selected(false),
+            ),
         }
     }
+}
 
-    pub async fn render(&mut self, out: Out) -> anyhow::Result<()> {
-        let mut connection_group_list: Vec<String> =
-            self.groups.iter().map(|x| x.render()).collect();
+#[async_trait]
+pub trait UiList<'a, T: ListableItem> {
+    fn new(&self, items: Arc<Mutex<Vec<T>>>, bounds: Rect, selected_item: usize) -> Self;
+    async fn print(&self) -> Vec<StyledContent<String>>;
+    fn bounds(&self) -> &Rect;
+    fn get_selected_index(&self) -> usize;
+}
 
-        self.selected.0 = self
-            .selected
-            .0
-            .max(0)
-            .min(connection_group_list.len().checked_sub(1).unwrap_or(1));
-        let mut connection_group_members =
-            match self.groups.get(self.selected.0.checked_sub(1).unwrap_or(0)) {
-                Some(connection_group_members) => {
-                    connection_group_members.print_group_members(&self.details_list_bounds)
-                }
-                None => {
-                    vec![]
-                }
-            };
-        self.selected.1 = self
-            .selected
-            .1
-            .max(0)
-            .min(connection_group_members.len().checked_sub(1).unwrap_or(0));
+pub struct AddressList<T>
+where
+    T: ListableItem + Send + Sync
+{
+    bounds: Rect,
+    list: Arc<Mutex<Vec<T>>>,
+    current: bool,
+    selected_item: usize,
+}
 
-        match connection_group_list
-            .len()
-            .cmp(&connection_group_members.len())
-        {
-            Ordering::Less => {
-                connection_group_list.resize(connection_group_members.len(), String::new());
-            }
-            Ordering::Greater => {
-                connection_group_members.resize(connection_group_members.len(), String::new());
-            }
-            Ordering::Equal => {}
+#[async_trait]
+impl<'a, T: ListableItem + Send + Sync> UiList<'a, T> for AddressList<T> {
+    fn new(&self, items: Arc<Mutex<Vec<T>>>, bounds: Rect, selected_item: usize) -> Self {
+        AddressList {
+            bounds,
+            list: items,
+            selected_item,
+            current: false,
         }
+    }
+    fn get_selected_index(&self) -> usize {
+        self.selected_item
+    }
 
-        let mut buffer: Vec<(Option<&str>, Option<&str>)> = vec![];
-
-        for pair in connection_group_list
+    async fn print(&self) -> Vec<StyledContent<String>> {
+        self.list.lock().await
             .iter()
-            .zip_longest(connection_group_members.iter())
-        {
-            match pair {
-                itertools::EitherOrBoth::Both(list, members) => {
-                    buffer.push((Some(list), Some(members)));
-                }
-                itertools::EitherOrBoth::Left(list) => {
-                    buffer.push((Some(list), None));
-                }
-                itertools::EitherOrBoth::Right(members) => {
-                    buffer.push((None, Some(members)));
-                }
-            }
-        }
-        let mut out = out.lock().await;
-        for (line, line_content) in buffer
-            .into_iter()
             .enumerate()
-            .take(self.window_size.height())
-        {
-            let selected_lines = (
-                line == self.selected.0,
-                (line == self.selected.1) && self.screen == Screen::Details,
-            );
-            let line = line as u16;
-            let line_text = self.print_line(line_content, selected_lines);
-            out.queue(MoveTo(1, line))?;
-            out.queue(Print(format!("{}", line_text.0)))?;
-            out.queue(Print("|"))?;
-            out.queue(Print(format!("{}", line_text.1)))?;
+            .map(
+                |(index, address)| {
+                    address.print(
+                        index == self.get_selected_index(),
+                        UiList::bounds(self).width(),
+                    )
+                }, //self.host.to_string()
+            )
+            .collect()
+    }
+    fn bounds(&self) -> &Rect {
+        todo!()
+    }
+}
+
+#[async_trait]
+pub trait UiElement {
+    fn bounds(&self) -> &Rect;
+    fn is_current(&self) -> bool;
+    async fn render(self, out: Out) -> anyhow::Result<()>;
+    fn get_header(&self) -> StyledContent<String>;
+}
+
+#[async_trait]
+impl<T: ListableItem + Sync + Send > UiElement for AddressList<T> {
+    fn is_current(&self) -> bool {
+        self.current
+    }
+
+    fn bounds(&self) -> &Rect {
+        &self.bounds
+    }
+
+    async fn render(self, out: Out) -> anyhow::Result<()> {
+        let buffer: Vec<StyledContent<String>> = UiList::print(&self).await
+            .into_iter()
+            .take(UiElement::bounds(&self).height())
+            .map(|item| {
+                StyleVariants::get_styled_item(
+                    format!("{:max$.max$}", item, max = UiList::bounds(&self).width()),
+                    StyleVariants::Selected(true),
+                )
+            })
+            .collect();
+        for line in buffer {
+            out.lock().await.queue(Print(line))?;
         }
-
-        out.queue(crossterm::cursor::MoveToNextLine(1))?;
-        out.queue(Print(format!("CurrentlySelectedItems:{:?}", self.selected)))?;
-        out.queue(crossterm::cursor::MoveToNextLine(1))?;
-
         Ok(())
     }
 
-    fn pad_and_truncate(str: &str, max_len: usize) -> String {
-        let pad = "-".repeat(max_len);
-        let mut buf = String::from(str);
-        buf.push_str(&pad);
-        buf.truncate(max_len);
-        buf
+    fn get_header(&self) -> StyledContent<String> {
+        StyleVariants::get_styled_item(
+            format!("{:^len$}", "Adress", len = UiElement::bounds(self).width()),
+            StyleVariants::Header,
+        )
     }
-
-    fn print_line(
-        &self,
-        line: (Option<&str>, Option<&str>),
-        selected: (bool, bool),
-    ) -> (ColoredString, ColoredString) {
-        let address_max_length = self.address_list_bounds.width();
-        let members_max_length = self.details_list_bounds.width();
-
-        let result = match line {
-            (Some(list), Some(members)) => {
-                let addr_max = address_max_length.checked_sub(list.len()).unwrap_or(0);
-                let member_max = members_max_length.checked_sub(members.len()).unwrap_or(0);
-                match selected {
-                    (true, true) => (
-                        Self::pad_and_truncate(list, addr_max).black().on_white(),
-                        Self::pad_and_truncate(members, member_max)
-                            .black()
-                            .on_white(),
-                    ),
-                    (true, false) => (
-                        Self::pad_and_truncate(list, addr_max).black().on_white(),
-                        Self::pad_and_truncate(members, member_max).on_blue(),
-                    ),
-                    (false, true) => (
-                        Self::pad_and_truncate(list, addr_max).on_blue(),
-                        Self::pad_and_truncate(members, member_max)
-                            .black()
-                            .on_white(),
-                    ),
-                    (false, false) => (
-                        Self::pad_and_truncate(list, addr_max).on_blue(),
-                        Self::pad_and_truncate(members, member_max).on_blue(),
-                    ),
-                }
-            }
-            (Some(list), None) => {
-                let addr_max = address_max_length.checked_sub(list.len()).unwrap_or(0);
-                let member_max = members_max_length;
-                match selected.0 {
-                    true => (
-                        Self::pad_and_truncate(list, addr_max).black().on_white(),
-                        Self::pad_and_truncate("", member_max).on_blue(),
-                    ),
-                    false => (
-                        Self::pad_and_truncate(list, addr_max).on_blue(),
-                        Self::pad_and_truncate("", member_max).on_blue(),
-                    ),
-                }
-            }
-            (None, Some(members)) => {
-                let addr_max = address_max_length;
-                let member_max = members_max_length.checked_sub(members.len()).unwrap_or(0);
-                match selected.1 {
-                    true => (
-                        Self::pad_and_truncate("", addr_max).normal(),
-                        Self::pad_and_truncate(members, member_max)
-                            .black()
-                            .on_white(),
-                    ),
-                    false => (
-                        Self::pad_and_truncate("", addr_max).normal(),
-                        Self::pad_and_truncate(members, member_max).normal(),
-                    ),
-                }
-            }
-            _ => {
-                let addr_pad = " ".repeat(address_max_length);
-                let member_pad = " ".repeat(members_max_length);
-                (addr_pad.on_blue(), member_pad.on_blue())
-            }
-        };
-        (result.0, result.1)
-    }
-
-    pub fn selected(self) -> (usize, usize) {
-        self.selected
-    }
-
 }
 
-#[derive(Debug)]
-struct ConnectionListGroupLine<'a> {
-    response: &'a TuiResponse,
-}
-
-#[derive(Debug)]
-struct ConnectionListGroup<'a> {
-    host: &'a IpAddr,
-    lines: Vec<ConnectionListGroupLine<'a>>,
-}
-
-impl<'a> ConnectionListGroup<'a> {
-    fn render(&self) -> String {
-        self.host.to_string()
+impl<T: ListableItem + Send + Sync + Clone> AddressList<T> {
+    pub fn default(bounds: Rect, list: Arc<Mutex<Vec<T>>>, current: bool, selected_item: usize) -> Self {
+        AddressList {
+            list,
+            current,
+            bounds,
+            selected_item,
+        }
     }
+    pub async fn get_selected_item(&self) -> T {
+        let list = &self.list.lock().await;
+         list[self.get_selected_index()].clone()
+    }
+}
 
-    fn print_group_members(&self, bounds: &Rect) -> Vec<String> {
-        let max_length = bounds.height().min(self.lines.len());
-        self.lines
-            .iter()
-            .take(max_length)
-            .map(|line| {
-                if let Some(content) = &line.response.http_response.content {
-                    let content = content.trim();
-                    let max_length = bounds.width().min(content.len());
-                    let mut buf = String::new();
-                    buf.push_str(&content[0..max_length]);
-                    buf
+impl ListableItem for TuiResponse {
+    fn print(&self, is_selected: bool, max_length: usize) -> StyledContent<String> {
+        match is_selected {
+            true => {
+                if let Some(response) = &self.http_response.content {
+                    StyleVariants::get_styled_item(
+                        format!("{:max_length$.max_length$}", response),
+                        StyleVariants::Selected(true),
+                    )
                 } else {
-                    "No response".to_string()
+                    StyleVariants::get_styled_item(
+                        "No response".to_string(),
+                        StyleVariants::Selected(true),
+                    )
                 }
+            }
+            false => {
+                if let Some(response) = &self.http_response.content {
+                    StyleVariants::get_styled_item(
+                        format!("{:max_length$.max_length$}", response.to_string()),
+                        StyleVariants::Selected(false),
+                    )
+                } else {
+                    StyleVariants::get_styled_item(
+                        "No response".to_string(),
+                        StyleVariants::Selected(false),
+                    )
+                }
+            }
+        }
+    }
+}
+
+pub struct ConnectionsList<T: ListableItem + Sync + Send> {
+    bounds: Rect,
+    list: Arc<Mutex<Vec<T>>>,
+    current: bool,
+    selected_item: usize,
+}
+
+#[async_trait]
+impl<'a, T: ListableItem + Send + Sync> UiList<'a, T> for ConnectionsList<T> {
+    fn new(&self, items: Arc<Mutex<Vec<T>>>, bounds: Rect, selected_item: usize) -> Self {
+        ConnectionsList {
+            bounds,
+            list: items,
+            current: false,
+            selected_item,
+        }
+    }
+    fn bounds(&self) -> &Rect {
+        &self.bounds
+    }
+    fn get_selected_index(&self) -> usize {
+        self.selected_item
+    }
+    async fn print(&self) -> Vec<StyledContent<String>> {
+        let list = Arc::clone(&self.list);
+        self.create_member_list(list, self.get_selected_index()).await
+    }
+}
+
+#[async_trait]
+impl<T: ListableItem + Send + Sync> UiElement for ConnectionsList<T> {
+    fn bounds(&self) -> &Rect {
+        &self.bounds
+    }
+    fn is_current(&self) -> bool {
+        self.current
+    }
+    async fn render(self, out: Out) -> anyhow::Result<()> {
+        let lines: Vec<StyledContent<String>> = self
+            .list.lock().await
+            .iter()
+            .enumerate()
+            .take(UiElement::bounds(&self).height())
+            .map(|(index, item)| {
+                item.print(self.selected_item == index, UiList::bounds(&self).width())
             })
+            .collect();
+        out.lock().await.queue(Print(""))?;
+        Ok(())
+    }
+    fn get_header(&self) -> StyledContent<String> {
+        StyleVariants::get_styled_item(
+            format!(
+                "{:^len$}",
+                "Connections",
+                len = UiElement::bounds(self).width()
+            ),
+            StyleVariants::Header,
+        )
+    }
+}
+impl<T: ListableItem + std::marker::Sync + std::marker::Send> ConnectionsList<T> {
+    async fn create_member_list(
+        &self,
+        groups: Arc<Mutex<Vec<T>>>,
+        _selectedgroup: usize,
+    ) -> Vec<StyledContent<String>> {
+        let groups = groups.lock().await;
+        groups
+            .iter()
+            .take(UiElement::bounds(self).height())
+            .map(|group| group.print(true, UiList::bounds(self).width()))
             .collect()
     }
+
+    pub fn default(list: Arc<Mutex<Vec<T>>>, bounds: Rect, current: bool, selected_item: usize) -> Self {
+        ConnectionsList {
+            list,
+            bounds,
+            current,
+            selected_item,
+        }
+    }
+}
+
+fn stash() {
+    /*
+    *
+       let connection_list_bounds = Rect {
+           rows: (window_size.rows.0, window_size.rows.1),
+           cols: (window_size.cols.0, window_size.cols.1),
+       };
+
+       let addr_list_length: usize = connection_list_bounds.width().checked_div(3).unwrap_or(0);
+
+       let (address_list_bounds, details_list_bounds): (Rect, Rect) = (
+           Rect::new(
+               (connection_list_bounds.cols.0 + 1, addr_list_length),
+               connection_list_bounds.rows,
+           ),
+           Rect::new(
+               (addr_list_length + 1, connection_list_bounds.cols.1),
+               connection_list_bounds.rows,
+           ),
+       );
+    *
+    *
+    *
+    * */
 }
