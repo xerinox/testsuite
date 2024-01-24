@@ -213,9 +213,11 @@ impl TuiState {
                 self.selected.0.into(),
             );
             let mut connection_list_items : Vec<TuiResponse> = vec![];
-            if let Some(items) = self.connections_cache.get(&address_list.get_selected_item().await) {
-                for item in items.into_iter() {
-                    connection_list_items.push(item.to_owned())
+            if let Some(selected_item) = &address_list.get_selected_item().await{
+                if let Some(items) = self.connections_cache.get(selected_item) {
+                    for item in items.into_iter() {
+                        connection_list_items.push(item.to_owned())
+                    }
                 }
             }
 
@@ -231,8 +233,8 @@ impl TuiState {
                 );
                 
             let out = Arc::clone(&out);
-            address_list.render({let out = Arc::clone(&out); out});
-            connection_list.render({let out = Arc::clone(&out); out});
+            address_list.render({let out = Arc::clone(&out); out}).await?;
+            connection_list.render({let out = Arc::clone(&out); out}).await?;
 
         }
         let out = Arc::clone(&out);

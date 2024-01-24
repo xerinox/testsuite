@@ -101,6 +101,7 @@ impl<T: ListableItem + Sync + Send > UiElement for AddressList<T> {
     }
 
     async fn render(self, out: Out) -> anyhow::Result<()> {
+        todo!();
         let buffer: Vec<StyledContent<String>> = UiList::print(&self).await
             .into_iter()
             .take(UiElement::bounds(&self).height())
@@ -134,9 +135,14 @@ impl<T: ListableItem + Send + Sync + Clone> AddressList<T> {
             selected_item,
         }
     }
-    pub async fn get_selected_item(&self) -> T {
+    pub async fn get_selected_item(&self) -> Option<T> {
         let list = &self.list.lock().await;
-         list[self.get_selected_index()].clone()
+        let item = list.get(self.get_selected_index());
+        match item {
+            Some(item) => return Some(item.clone()),
+            None => None
+        }
+
     }
 }
 
@@ -211,7 +217,8 @@ impl<T: ListableItem + Send + Sync> UiElement for ConnectionsList<T> {
         self.current
     }
     async fn render(self, out: Out) -> anyhow::Result<()> {
-        let lines: Vec<StyledContent<String>> = self
+        todo!();
+        let _lines: Vec<StyledContent<String>> = self
             .list.lock().await
             .iter()
             .enumerate()
@@ -256,30 +263,4 @@ impl<T: ListableItem + std::marker::Sync + std::marker::Send> ConnectionsList<T>
             selected_item,
         }
     }
-}
-
-fn stash() {
-    /*
-    *
-       let connection_list_bounds = Rect {
-           rows: (window_size.rows.0, window_size.rows.1),
-           cols: (window_size.cols.0, window_size.cols.1),
-       };
-
-       let addr_list_length: usize = connection_list_bounds.width().checked_div(3).unwrap_or(0);
-
-       let (address_list_bounds, details_list_bounds): (Rect, Rect) = (
-           Rect::new(
-               (connection_list_bounds.cols.0 + 1, addr_list_length),
-               connection_list_bounds.rows,
-           ),
-           Rect::new(
-               (addr_list_length + 1, connection_list_bounds.cols.1),
-               connection_list_bounds.rows,
-           ),
-       );
-    *
-    *
-    *
-    * */
 }
