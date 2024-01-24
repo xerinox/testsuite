@@ -26,6 +26,17 @@ Options:
           Print version
 ```
 
+#TUI 
+Contains two views, address list (incoming connection IPs) and details list, showing each connection in more detail.
+Trying to press enter on a detail will panic with todo.
+
+```
+<kbd>Up</kbd> / <kbd>Down</kbd> Move in list
+<kbd>Enter</kbd> - Select item for further inspection
+<kbd>Esc</kbd> - Go back to previous view
+
+```
+
 ## Examples:
 ### Json file:
 
