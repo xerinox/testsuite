@@ -73,13 +73,14 @@ impl<'a, T: ListableItem + Send + Sync> UiList<'a, T> for AddressList<T> {
         self.list.lock().await
             .iter()
             .enumerate()
+            .take(UiList::bounds(self).height())
             .map(
                 |(index, address)| {
                     address.print(
                         index == self.get_selected_index(),
                         UiList::bounds(self).width(),
                     )
-                }, //self.host.to_string()
+                } 
             )
             .collect()
     }
@@ -94,11 +95,11 @@ pub trait UiElement {
     fn is_current(&self) -> bool;
     async fn render(self, out: Out) -> anyhow::Result<()>;
     fn get_header(&self) -> StyledContent<String>;
-    fn get_next_line(&self, counter: u16) -> (u16, u16) {
+    fn get_next_line(&self, counter: u16) -> MoveTo{
         let bounds = self.bounds();
         let cols:u16 = bounds.cols.0 as u16;
         let rows:u16 = bounds.rows.0 as u16;
-        (cols, rows + counter)
+        MoveTo(cols, rows+counter)
     }
 }
 
@@ -113,23 +114,12 @@ impl<T: ListableItem + Sync + Send > UiElement for AddressList<T> {
     }
 
     async fn render(self, out: Out) -> anyhow::Result<()> {
-        let buffer: Vec<StyledContent<String>> = UiList::print(&self).await
-            .into_iter()
-            .take(UiElement::bounds(&self).height())
-            .map(|item| {
-                StyleVariants::get_styled_item(
-                    format!("{:max$.max$}", item, max = UiList::bounds(&self).width()),
-                    StyleVariants::Selected(true),
-                )
-            })
-            .collect();
+        let buffer: Vec<StyledContent<String>> = UiList::print(&self).await;
         let mut out = out.lock().await;
-        let next_pos = self.get_next_line(0);
-        out.queue(MoveTo(next_pos.0, next_pos.1))?;
+        out.queue(self.get_next_line(0))?;
         out.queue(PrintStyledContent(self.get_header()))?;
         for (line, content) in buffer.into_iter().enumerate() {
-            let next_pos = self.get_next_line(line as u16 +1);
-            out.queue(MoveTo(next_pos.0, next_pos.1))?;
+            out.queue(self.get_next_line(line as u16 + 1))?;
             out.queue(PrintStyledContent(content))?;
         }
         Ok(())
@@ -235,23 +225,12 @@ impl<T: ListableItem + Send + Sync> UiElement for ConnectionsList<T> {
         self.current
     }
     async fn render(self, out: Out) -> anyhow::Result<()> {
-        let buffer: Vec<StyledContent<String>> = self
-            .list.lock().await
-            .iter()
-            .enumerate()
-            .take(UiElement::bounds(&self).height())
-            .map(|(index, item)| {
-                item.print(self.selected_item == index, UiList::bounds(&self).width())
-            })
-            .collect();
+        let buffer = self.print().await;
         let mut out = out.lock().await;
-        let next_pos = self.get_next_line(0);
-        out.queue(MoveTo(next_pos.0, next_pos.1))?;
+        out.queue(self.get_next_line(0))?;
         out.queue(PrintStyledContent(self.get_header()))?;
-        out.queue(MoveTo(next_pos.0, next_pos.1+10))?;
         for (line, content) in buffer.into_iter().enumerate() {
-            let next_pos = self.get_next_line(line as u16 +1);
-            out.queue(MoveTo(next_pos.0, next_pos.1))?;
+            out.queue(self.get_next_line(line as u16 + 1))?;
             out.queue(PrintStyledContent(content))?;
         }
 
@@ -274,11 +253,13 @@ impl<T: ListableItem + std::marker::Sync + std::marker::Send> ConnectionsList<T>
         groups: Arc<Mutex<Vec<T>>>,
         _selectedgroup: usize,
     ) -> Vec<StyledContent<String>> {
-        let groups = groups.lock().await;
-        groups
+        groups.lock().await
             .iter()
+            .enumerate()
             .take(UiElement::bounds(self).height())
-            .map(|group| group.print(true, UiList::bounds(self).width()))
+            .map(|(index, item)| {
+                item.print(self.selected_item == index, UiList::bounds(self).width())
+            })
             .collect()
     }
 
