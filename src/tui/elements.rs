@@ -1,6 +1,7 @@
 use async_trait::async_trait;
+use crossterm::cursor::MoveTo;
+use crossterm::style::{Print, PrintStyledContent};
 use crossterm::QueueableCommand;
-use crossterm::style::Print;
 use crossterm::style::StyledContent;
 
 use crate::tui::{style::StyleVariants, Rect, TuiResponse};
@@ -12,19 +13,23 @@ use std::sync::Arc;
 
 type Out = Arc<Mutex<Stdout>>;
 
+/// Trait for defining an item as listable in the UiList component
 pub trait ListableItem {
     fn print(&self, is_selected: bool, max_length: usize) -> StyledContent<String>;
+    fn size_text(&self, text: &str, max_length: usize) -> String {
+        format!("{:max_length$.max_length$}", text.trim())
+    }
 }
 
 impl ListableItem for IpAddr {
     fn print(&self, is_selected: bool, max_length: usize) -> StyledContent<String> {
         match is_selected {
             true => StyleVariants::get_styled_item(
-                format!("{:max_length$.max_length$}", self.to_string()),
+                self.size_text(&self.to_string(), max_length),
                 StyleVariants::Selected(true),
             ),
             false => StyleVariants::get_styled_item(
-                format!("{:max_length$.max_length$}", self.to_string()),
+                self.size_text(&self.to_string(), max_length),
                 StyleVariants::Selected(false),
             ),
         }
@@ -32,7 +37,8 @@ impl ListableItem for IpAddr {
 }
 
 #[async_trait]
-pub trait UiList<'a, T: ListableItem> {
+/// Trait for defining an UIElement as a list
+pub trait UiList<'a, T: ListableItem>: UiElement {
     fn new(&self, items: Arc<Mutex<Vec<T>>>, bounds: Rect, selected_item: usize) -> Self;
     async fn print(&self) -> Vec<StyledContent<String>>;
     fn bounds(&self) -> &Rect;
@@ -78,7 +84,7 @@ impl<'a, T: ListableItem + Send + Sync> UiList<'a, T> for AddressList<T> {
             .collect()
     }
     fn bounds(&self) -> &Rect {
-        todo!()
+        &self.bounds
     }
 }
 
@@ -88,6 +94,12 @@ pub trait UiElement {
     fn is_current(&self) -> bool;
     async fn render(self, out: Out) -> anyhow::Result<()>;
     fn get_header(&self) -> StyledContent<String>;
+    fn get_next_line(&self, counter: u16) -> (u16, u16) {
+        let bounds = self.bounds();
+        let cols:u16 = bounds.cols.0 as u16;
+        let rows:u16 = bounds.rows.0 as u16;
+        (cols, rows + counter)
+    }
 }
 
 #[async_trait]
@@ -101,7 +113,6 @@ impl<T: ListableItem + Sync + Send > UiElement for AddressList<T> {
     }
 
     async fn render(self, out: Out) -> anyhow::Result<()> {
-        todo!();
         let buffer: Vec<StyledContent<String>> = UiList::print(&self).await
             .into_iter()
             .take(UiElement::bounds(&self).height())
@@ -112,8 +123,14 @@ impl<T: ListableItem + Sync + Send > UiElement for AddressList<T> {
                 )
             })
             .collect();
-        for line in buffer {
-            out.lock().await.queue(Print(line))?;
+        let mut out = out.lock().await;
+        let next_pos = self.get_next_line(0);
+        out.queue(MoveTo(next_pos.0, next_pos.1))?;
+        out.queue(PrintStyledContent(self.get_header()))?;
+        for (line, content) in buffer.into_iter().enumerate() {
+            let next_pos = self.get_next_line(line as u16 +1);
+            out.queue(MoveTo(next_pos.0, next_pos.1))?;
+            out.queue(PrintStyledContent(content))?;
         }
         Ok(())
     }
@@ -152,12 +169,12 @@ impl ListableItem for TuiResponse {
             true => {
                 if let Some(response) = &self.http_response.content {
                     StyleVariants::get_styled_item(
-                        format!("{:max_length$.max_length$}", response),
+                        self.size_text(response, max_length),
                         StyleVariants::Selected(true),
                     )
                 } else {
                     StyleVariants::get_styled_item(
-                        "No response".to_string(),
+                        self.size_text("No response", max_length),
                         StyleVariants::Selected(true),
                     )
                 }
@@ -165,12 +182,12 @@ impl ListableItem for TuiResponse {
             false => {
                 if let Some(response) = &self.http_response.content {
                     StyleVariants::get_styled_item(
-                        format!("{:max_length$.max_length$}", response.to_string()),
+                        self.size_text(response, max_length),
                         StyleVariants::Selected(false),
                     )
                 } else {
                     StyleVariants::get_styled_item(
-                        "No response".to_string(),
+                        self.size_text("No response", max_length),
                         StyleVariants::Selected(false),
                     )
                 }
@@ -179,6 +196,7 @@ impl ListableItem for TuiResponse {
     }
 }
 
+#[derive(Debug)]
 pub struct ConnectionsList<T: ListableItem + Sync + Send> {
     bounds: Rect,
     list: Arc<Mutex<Vec<T>>>,
@@ -217,8 +235,7 @@ impl<T: ListableItem + Send + Sync> UiElement for ConnectionsList<T> {
         self.current
     }
     async fn render(self, out: Out) -> anyhow::Result<()> {
-        todo!();
-        let _lines: Vec<StyledContent<String>> = self
+        let buffer: Vec<StyledContent<String>> = self
             .list.lock().await
             .iter()
             .enumerate()
@@ -227,7 +244,17 @@ impl<T: ListableItem + Send + Sync> UiElement for ConnectionsList<T> {
                 item.print(self.selected_item == index, UiList::bounds(&self).width())
             })
             .collect();
-        out.lock().await.queue(Print(""))?;
+        let mut out = out.lock().await;
+        let next_pos = self.get_next_line(0);
+        out.queue(MoveTo(next_pos.0, next_pos.1))?;
+        out.queue(PrintStyledContent(self.get_header()))?;
+        out.queue(MoveTo(next_pos.0, next_pos.1+10))?;
+        for (line, content) in buffer.into_iter().enumerate() {
+            let next_pos = self.get_next_line(line as u16 +1);
+            out.queue(MoveTo(next_pos.0, next_pos.1))?;
+            out.queue(PrintStyledContent(content))?;
+        }
+
         Ok(())
     }
     fn get_header(&self) -> StyledContent<String> {

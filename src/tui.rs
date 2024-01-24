@@ -199,10 +199,12 @@ impl TuiState {
                 cols: (0, self.window_size.cols.1.checked_div(3).unwrap_or(10)),
                 rows: (0, self.window_size.rows.1),
             };
+
             let connection_list_bounds = Rect {
                 cols: (address_list_bounds.width()+1, self.window_size.cols.1),
                 rows: (0, self.window_size.rows.1)
             };
+
             let addresses = Arc::from(Mutex::new(self.connections_cache.keys().map(|x| x.clone()).collect_vec()));
 
             let address_list = AddressList::default(
@@ -212,6 +214,7 @@ impl TuiState {
                 true,
                 self.selected.0.into(),
             );
+
             let mut connection_list_items : Vec<TuiResponse> = vec![];
             if let Some(selected_item) = &address_list.get_selected_item().await{
                 if let Some(items) = self.connections_cache.get(selected_item) {
@@ -231,13 +234,12 @@ impl TuiState {
                 false,
                 selected_item
                 );
-                
-            let out = Arc::clone(&out);
-            address_list.render({let out = Arc::clone(&out); out}).await?;
-            connection_list.render({let out = Arc::clone(&out); out}).await?;
-
+            {    
+                let out = Arc::clone(&out);
+                address_list.render({let out = Arc::clone(&out); out}).await?;
+                connection_list.render({let out = Arc::clone(&out); out}).await?;
+            }
         }
-        let out = Arc::clone(&out);
         let mut out = out.lock().await;
 
         out.queue(crossterm::cursor::MoveTo(self.cursor.0, self.cursor.1))?;
