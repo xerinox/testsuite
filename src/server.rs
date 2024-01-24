@@ -4,7 +4,8 @@ use anyhow::Result;
 use nanohttp::{Method, Request as HttpRequest, Response as HttpResponse, Status};
 use std::net::SocketAddr;
 use std::str::from_utf8;
-use std::{collections::HashMap, sync::Arc};
+use std::{sync::Arc};
+use indexmap::IndexMap;
 use testsuite::ResponseMessage;
 use tokio::sync::mpsc;
 use tokio::{ io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
@@ -15,7 +16,7 @@ pub async fn push_message(tx: mpsc::Sender<Message>, message: Message) {
 
 async fn handle(
     req: HttpRequest,
-    map: &Arc<HashMap<String, ResponseContent>>,
+    map: &Arc<IndexMap<String, ResponseContent>>,
     addr: SocketAddr,
     sender: mpsc::Sender<Message>,
 ) -> HttpResponse {
@@ -77,7 +78,7 @@ async fn handle(
 pub async fn handle_connection(
     addr: SocketAddr,
     mut stream: TcpStream,
-    map: &Arc<HashMap<String, ResponseContent>>,
+    map: &Arc<IndexMap<String, ResponseContent>>,
     sender: tokio::sync::mpsc::Sender<Message>,
 ) -> Result<()> {
     push_message({let sender = sender.clone(); sender}, Message::ConnectionReceived(Some(addr))).await;

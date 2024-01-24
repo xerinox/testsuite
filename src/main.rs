@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use futures::lock::Mutex;
 use std::time::Duration;
-use std::collections::HashMap;
+use indexmap::IndexMap;
 use tokio::sync::mpsc::channel;
 mod tui;
 use clap::Parser;
@@ -24,7 +24,7 @@ use crate::server::*;
 
 const REFRESH_RATE: u64 = 1000;
 
-pub type Connections = HashMap<IpAddr, Vec<TuiResponse>>;
+pub type Connections = IndexMap<IpAddr, Vec<TuiResponse>>;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {

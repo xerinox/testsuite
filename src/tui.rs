@@ -4,8 +4,10 @@ pub mod style;
 
 use chrono::Utc;
 use crossterm;
+use crossterm::cursor::{MoveTo, MoveToNextLine};
 use crossterm::event::Event;
 use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::style::Print;
 use crossterm::QueueableCommand;
 use elements::*;
 use futures::lock::Mutex;
@@ -26,7 +28,7 @@ pub struct TuiState {
     pub connections_cache: Connections,
     pub needs_update: bool,
     pub selected: (Select, Select),
-    pub screen: Screen,
+    screen: Screen,
     pub prompt: String,
 }
 
@@ -170,6 +172,7 @@ impl TuiState {
             prompt: String::new(),
         }
     }
+
     async fn cache(connections: Arc<Mutex<Connections>>) -> Connections {
         let mut cache_to = Connections::new();
         {
@@ -206,13 +209,15 @@ impl TuiState {
             };
 
             let addresses = Arc::from(Mutex::new(self.connections_cache.keys().map(|x| x.clone()).collect_vec()));
+            let selected_item:usize = self.selected.0.into();
+            let selected_item = selected_item.checked_sub(1).unwrap_or(0);
 
             let address_list = AddressList::default(
                 address_list_bounds,
                 addresses,
                 
                 true,
-                self.selected.0.into(),
+                selected_item
             );
 
             let mut connection_list_items : Vec<TuiResponse> = vec![];
@@ -225,7 +230,14 @@ impl TuiState {
             }
 
             let connection_list_ref = Arc::from(Mutex::new(connection_list_items));
-            let selected_item = self.selected.1.into();
+            let selected_item:usize = self.selected.1.into();
+            let selected_item = selected_item.checked_sub(1).unwrap_or(0);
+                
+            {
+                let mut out = out.lock().await;
+                out.queue(crossterm::cursor::MoveTo(10, 10))?;
+                out.queue(Print(format!("{:?}", self.selected)))?;
+            }
                
 
             let connection_list = ConnectionsList::default(
@@ -247,6 +259,60 @@ impl TuiState {
         out.flush()?;
         Ok(())
     }
+
+    fn set_screen(&mut self, screen: Screen) {
+        self.screen = screen
+    }
+
+    fn select(&mut self, id: usize, max_value: usize) {
+        match self.screen {
+            Screen::List => {
+                self.selected.0.select(Some(id), max_value)
+            },
+            Screen::Details => {
+                self.selected.1.select(Some(id), max_value)
+            }
+        }
+    }
+
+    fn get_select(&self) -> Select {
+        match self.screen {
+            Screen::List => {
+                self.selected.0
+            },
+
+            Screen::Details => {
+                self.selected.1
+            }
+        }
+    }
+
+    fn get_max_select_size(&self) -> Option<usize>{
+        match self.screen {
+            Screen::List => {
+                match self.connections_cache.is_empty() {
+                    true => None,
+                    false => Some(self.connections_cache.len())
+                }
+            },
+
+            Screen::Details => {
+                let selected_connection:usize = self.selected.0.into();
+                if let Some(details) = self.connections_cache.get_index(selected_connection){
+                    match details.1.is_empty() {
+                        false => {
+                            Some(details.1.len())
+                        },
+                        true => {
+                            Some(selected_connection)
+                        }
+                    }
+                } else {
+                    None
+                }
+            }
+        }
+    }
 }
 
 #[derive(PartialEq, Debug)]
@@ -261,7 +327,7 @@ pub async fn parse_cli_event(
     tuistate: Arc<Mutex<TuiState>>,
     exit_reason: &mut Option<String>,
 ) -> anyhow::Result<()> {
-    let mut moved: (Option<Direction>, Option<Direction>) = (None, None);
+    let mut moved: Option<Direction> = None;
     let mut changed_state: Option<Screen> = None;
     if let Some(event) = event {
         let mut out = out.lock().await;
@@ -274,11 +340,11 @@ pub async fn parse_cli_event(
                     }
                     (KeyCode::Up, KeyModifiers::NONE) => {
                         //out.queue(crossterm::cursor::MoveUp(1))?;
-                        moved = (Some(Direction::Up), None);
+                        moved = Some(Direction::Up);
                     }
                     (KeyCode::Down, KeyModifiers::NONE) => {
                         //out.queue(crossterm::cursor::MoveDown(1))?;
-                        moved = (Some(Direction::Down), None);
+                        moved = Some(Direction::Down);
                     }
                     (KeyCode::Right, KeyModifiers::NONE) => {
                         //out.queue(crossterm::cursor::MoveRight(1))?;
@@ -317,29 +383,21 @@ pub async fn parse_cli_event(
     }
 
     {
-        if moved != (None, None) {
+        if moved != None {
             let mut tuistate = tuistate.lock().await;
-            match tuistate.screen {
-                Screen::List => moved = (moved.0, None),
-                Screen::Details => moved = (None, moved.0),
-            }
-
-            if let Ok((new_row, new_col)) = crossterm::cursor::position() {
-                let (old_row, old_col) = tuistate.cursor;
-                if (old_row, old_col) != (new_row, new_col) {
-                    tuistate.cursor = (new_row, new_col);
-                }
-            }
-
-            let new_selected = match moved {
-                (Some(Direction::Up), None) => (tuistate.selected.0.sub(1), tuistate.selected.1),
-                (Some(Direction::Down), None) => (tuistate.selected.0.add(1), tuistate.selected.1),
-                (None, Some(Direction::Up)) => (tuistate.selected.0, tuistate.selected.1.sub(1)),
-                (None, Some(Direction::Down)) => (tuistate.selected.0, tuistate.selected.1.add(1)),
-                (None, None) => tuistate.selected,
-                _ => panic!("Do not support diagonally"),
+            let max_select = tuistate.get_max_select_size();
+            let new_selected= match moved {
+                Some(Direction::Up) => {
+                    tuistate.get_select().sub(1)
+                },
+                Some(Direction::Down) => {
+                    tuistate.get_select().add(1)
+                },
+                _ => {
+                    tuistate.get_select()
+                },
             };
-            tuistate.selected = new_selected;
+            tuistate.select(new_selected.into(), max_select.unwrap_or(0));
         }
     }
     let out = Arc::clone(&out);
