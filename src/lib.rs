@@ -1,7 +1,9 @@
 use clap::{Args, Parser};
-use colored::Colorize;
+use anyhow::Result;
+use nanohttp::Response;
 use serde::Serialize;
-use std::{collections::HashMap, error::Error, fmt::Display, fs, path::PathBuf, str::FromStr};
+use indexmap::IndexMap;
+use std::{error::Error, fmt::Display, fs, path::PathBuf, str::FromStr, net::SocketAddr};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -44,6 +46,29 @@ pub enum ResponseFormat {
     #[default]
     Json,
     Html,
+    None,
+}
+
+#[derive(Debug)]
+pub enum Message {
+    ConnectionFailed,
+    ConnectionReceived(Option<SocketAddr>),
+    Response(ResponseMessage),
+}
+
+#[derive(Debug)]
+pub struct ResponseMessage {
+    pub addr: SocketAddr,
+    pub response: Response,
+}
+
+impl ResponseMessage {
+    pub fn new(addr: SocketAddr, response: &Response) -> Self {
+        ResponseMessage {
+            addr,
+            response: response.clone()
+        }
+    }
 }
 
 impl ToString for ResponseFormat {
@@ -54,10 +79,14 @@ impl ToString for ResponseFormat {
             },
             ResponseFormat::Html => {
                 "text/html".to_string()
+            },
+            ResponseFormat::None => {
+                String::new()
             }
         }
     }
 }
+
 
 #[derive(Debug)]
 pub enum ResponseFormatError {
@@ -70,18 +99,19 @@ impl FromStr for ResponseFormat {
         match s.to_ascii_lowercase().as_str() {
             "json" => Ok(ResponseFormat::Json),
             "html" => Ok(ResponseFormat::Html),
+            "" => Ok(ResponseFormat::None),
             _ => Err(ResponseFormatError::ParseFailedError(s.to_owned())),
         }
     }
 }
 
-#[derive(Default, Clone)]
-pub struct Response {
+#[derive(Default,Clone, Debug)]
+pub struct ResponseContent {
     pub content: Option<String>,
-    pub format: ResponseFormat,
+    pub format: String,
 }
 
-impl ToString for Response {
+impl ToString for ResponseContent {
     /// Turns response into http response string
     fn to_string(&self) -> String {
         match &self.content {
@@ -102,59 +132,59 @@ impl Display for FolderError {
     }
 }
 impl Error for FolderError {}
-impl Response {
+impl ResponseContent {
     /// Creates a response from text content, endpoint, and format
-    pub fn from_content(content: &str, response_format: &ResponseFormat) -> Response {
-        Response {
+    pub fn from_content(content: &str, response_format: &ResponseFormat) -> ResponseContent {
+        ResponseContent {
             content: Some(String::from(content)),
-            format: response_format.clone(),
+            format: response_format.to_string(),
         }
     }
 
     /// Creates a response from content file and response format
-    pub fn from_content_file(path: &PathBuf, response_format: &ResponseFormat) -> Response {
-        Response {
+    pub fn from_content_file(path: &PathBuf, response_format: &ResponseFormat) -> ResponseContent {
+        ResponseContent {
             content: match path.exists() {
                 true => Some(fs::read_to_string(path).expect("File is unreadable")),
                 false => {
-                    eprintln!("{}", format!("Could not find file: {:}, continuing with blank response", path.to_str().expect("Path is unparseable")).yellow());
+                    eprintln!("{}", format!("Could not find file: {:}, continuing with blank response", path.to_str().expect("Path is unparseable")));
                     None
                 }
             },
-            format: response_format.clone(),
+            format: response_format.to_string(),
         }
     }
 
     /// Creates a response from Argument object
-    pub fn from_args(args: &Arguments) -> Response {
+    pub fn from_args(args: &Arguments) -> ResponseContent {
         let response_format = &args.format;
         if let Some(content) = &args.content.content {
-            return Response::from_content(content, response_format);
+            return ResponseContent::from_content(content, response_format);
         } else if let Some(p) = &args.content.content_file {
-            return Response::from_content_file(p, response_format);
+            return ResponseContent::from_content_file(p, response_format);
         } else {
-            return Response {
+            return ResponseContent {
                 content: None,
-                format: response_format.clone(),
+                format: response_format.to_string(),
             };
         }
     }
 
     pub fn from_folder(
         path: &PathBuf,
-    ) -> Result<HashMap<String, Response>, FolderError> {
+    ) -> Result<IndexMap<String, ResponseContent>, FolderError> {
         if path.exists() {
             if path.is_dir() {
                 let paths = fs::read_dir(path).map_err(|e| FolderError {
                     error: format!("{}", e.to_string()),
                 })?;
-                let map:HashMap<String, Response> = paths
+                let map:IndexMap<String, ResponseContent> = paths
                     .filter_map(|file| match file {
                         Ok(some) => {
                             Some(some)
                         },
                         Err(e) => {
-                            eprintln!("{}", format!("Error: could not read directory: {:?}", e).red());
+                            eprintln!("{}", format!("Error: could not read directory: {:?}", e));
                             None
                         }
                     }).filter_map(|file| {
@@ -175,11 +205,11 @@ impl Response {
                                     Some((ResponseFormat::Html, file.path()))
                                 },
                                 (_, Some(_)) => {
-                                    eprintln!("{}", format!("File: {} does not have a valid extension [html, json]", file.path().to_str()?).yellow());
+                                    eprintln!("{}", format!("File: {} does not have a valid extension [html, json]", file.path().to_str()?));
                                     None
                                 },
                                 (Some(_), None) => {
-                                    eprintln!("{}", format!("File: {} does not have a file name for use in endpoint generation", file.path().to_str()?).yellow());
+                                    eprintln!("{}", format!("File: {} does not have a file name for use in endpoint generation", file.path().to_str()?));
                                     None
                                 },
                                 _ => {
@@ -187,7 +217,7 @@ impl Response {
                                 }
                             }
                         } else {
-                            eprintln!("{}", format!("File: {} does not have an extension, valid extensions are [html, json]", file.path().to_str()?).yellow());
+                            eprintln!("{}", format!("File: {} does not have an extension, valid extensions are [html, json]", file.path().to_str()?));
                             None
                         }
 
@@ -196,7 +226,7 @@ impl Response {
                         let mut endpoint = String::from("/");
                         endpoint.push_str(stem.file_stem().unwrap().to_str().unwrap());
                         (endpoint, 
-                            Response::from_content_file(
+                            ResponseContent::from_content_file(
                                 &stem,
                                 &format,
                             ))
@@ -213,8 +243,8 @@ impl Response {
     }
 }
 
-pub fn populate_map(args: &Arguments) -> HashMap<String, Response> {
-    let mut map: HashMap<String, Response> = HashMap::new();
+pub fn populate_map(args: &Arguments) -> IndexMap<String, ResponseContent> {
+    let mut map: IndexMap<String, ResponseContent> = IndexMap::new();
     let (content, content_file, content_folder) = (
         &args.content.content,
         &args.content.content_file,
@@ -224,7 +254,7 @@ pub fn populate_map(args: &Arguments) -> HashMap<String, Response> {
         (Some(content), None, None) => {
             map.insert(
                 args.endpoint.clone(),
-                Response::from_content(&content, &args.format),
+                ResponseContent::from_content(&content, &args.format),
             );
         }
         (None, Some(content_file), None) => {
@@ -236,10 +266,10 @@ pub fn populate_map(args: &Arguments) -> HashMap<String, Response> {
                 }
                 None => String::from("/"),
             };
-            map.insert(endpoint, Response::from_content_file(&content_file, &args.format));
+            map.insert(endpoint, ResponseContent::from_content_file(&content_file, &args.format));
         }
         (None, None, Some(content_folder)) => {
-            match Response::from_folder(&content_folder) {
+            match ResponseContent::from_folder(&content_folder) {
                 Ok(map_b) => {
                     eprintln!("Valid endpoints: {:?}", map_b.keys().collect::<Vec<_>>());
                     map.extend(map_b)
@@ -250,8 +280,9 @@ pub fn populate_map(args: &Arguments) -> HashMap<String, Response> {
             }
         }
         _ => {
-            map.insert(String::from("/"), Response::default());
+            map.insert(String::from("/"), ResponseContent::default());
         }
     }
     map
 }
+
