@@ -1,26 +1,23 @@
 use anyhow::Result;
-use crossterm::{event::EventStream, execute};
-use crossterm::QueueableCommand;
+use crossterm::{event::EventStream, execute, QueueableCommand};
 use futures::FutureExt;
-use std::net::IpAddr;
-use std::sync::Arc;
-
-use futures::lock::Mutex;
-use std::time::Duration;
-#[macro_use] extern crate log;
+use std::{net::IpAddr, sync::Arc};
+#[macro_use]
+extern crate log;
 extern crate simplelog;
+use futures::{lock::Mutex, StreamExt};
+use indexmap::IndexMap;
 use simplelog::*;
 use std::fs::File;
-use indexmap::IndexMap;
+use std::time::Duration;
 use tokio::sync::mpsc::channel;
-mod tui;
+pub mod tui;
 use clap::Parser;
 use std::io::stdout;
-use testsuite::{populate_map, Arguments, Message, ResponseContent};
+use testsuite::{populate_map, Arguments, ConnectionFailedError, EndpointContent, Message};
 use tui::{TuiResponse, *};
 
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-use futures::StreamExt;
 
 mod server;
 use crate::server::*;
@@ -35,10 +32,12 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let args = Arguments::parse();
 
-
-    CombinedLogger::init(vec![
-        WriteLogger::new(args.log.log_filter.clone().into(), Config::default(), File::create(args.log.log_file.clone()).unwrap())
-    ]).unwrap();
+    CombinedLogger::init(vec![WriteLogger::new(
+        args.log.log_filter.clone().into(),
+        Config::default(),
+        File::create(args.log.log_file.clone()).unwrap(),
+    )])
+    .unwrap();
 
     let port = args.port;
 
@@ -60,30 +59,36 @@ async fn main() -> Result<(), anyhow::Error> {
         loop {
             match listener.accept().await {
                 Ok((socket, addr)) => {
-                    if let Err(err) = handle_connection(addr, socket, &reference, request_sender.clone()).await
+                    if let Err(err) =
+                        handle_connection(addr, socket, &reference, request_sender.clone()).await
                     {
-                        warn!("Could not parse request from address: {:}, error:{:}", addr, err);
-                        let _ = request_sender.send(Message::ConnectionFailed(ConnectionFailedError::Parsing((addr, err)))).await;
+                        warn!(
+                            "Could not parse request from address: {:}, error:{:}",
+                            addr, err
+                        );
+                        let _ = request_sender
+                            .send(Message::ConnectionFailed(ConnectionFailedError::Parsing((
+                                addr, err,
+                            ))))
+                            .await;
                     }
-                },
+                }
                 Err(err) => {
-                        warn!("Could not receive connection:{:}", err);
+                    warn!("Could not receive connection:{:}", err);
                 }
             }
         }
     });
 
-    execute!(stdout(),
-    crossterm::cursor::Hide
-    )?;
+    execute!(stdout(), crossterm::cursor::Hide)?;
     let stdout = stdout();
     let out = Arc::from(Mutex::from(stdout));
     enable_raw_mode()?;
     let mut reader = EventStream::new();
     let mut exit_reason = None::<String>;
-    let tuistate = Arc::new(Mutex::new(TuiState::new(
-        Arc::clone(&connections_ref),
-    ).await));
+    let tuistate = Arc::new(Mutex::new(
+        TuiState::new(Arc::clone(&connections_ref)).await,
+    ));
     let tui_ref = Arc::clone(&tuistate);
 
     let message_client = tokio::spawn(async move {
@@ -119,9 +124,7 @@ async fn main() -> Result<(), anyhow::Error> {
         }
     };
 
-    execute!(std::io::stdout(),
-    crossterm::cursor::Show
-    )?;
+    execute!(std::io::stdout(), crossterm::cursor::Show)?;
 
     out.lock().await.queue(crossterm::terminal::Clear(
         crossterm::terminal::ClearType::All,

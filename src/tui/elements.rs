@@ -67,12 +67,7 @@ impl ListableItem for &str {
 #[async_trait]
 /// Trait for defining an UIElement as a list
 pub trait UiList<'a, T: ListableItem>: UiElement {
-    fn new(
-        items: Arc<Mutex<Vec<T>>>,
-        bounds: Rect,
-        current: bool,
-        selected_item: usize,
-    ) -> Self;
+    fn new(items: Arc<Mutex<Vec<T>>>, bounds: Rect, current: bool, selected_item: usize) -> Self;
     async fn print(&self) -> Vec<StyledContent<String>>;
     fn bounds(&self) -> &Rect;
     fn get_selected_index(&self) -> usize;
@@ -91,12 +86,7 @@ where
 
 #[async_trait]
 impl<'a, T: ListableItem + Send + Sync> UiList<'a, T> for AddressList<T> {
-    fn new(
-        items: Arc<Mutex<Vec<T>>>,
-        bounds: Rect,
-        current: bool,
-        selected_item: usize,
-    ) -> Self {
+    fn new(items: Arc<Mutex<Vec<T>>>, bounds: Rect, current: bool, selected_item: usize) -> Self {
         AddressList {
             bounds,
             list: items,
@@ -204,12 +194,7 @@ pub struct ConnectionsList<T: ListableItem + Sync + Send> {
 
 #[async_trait]
 impl<'a, T: ListableItem + Send + Sync> UiList<'a, T> for ConnectionsList<T> {
-    fn new(
-        items: Arc<Mutex<Vec<T>>>,
-        bounds: Rect,
-        current: bool,
-        selected_item: usize,
-    ) -> Self {
+    fn new(items: Arc<Mutex<Vec<T>>>, bounds: Rect, current: bool, selected_item: usize) -> Self {
         ConnectionsList {
             bounds,
             list: items,
@@ -344,7 +329,7 @@ impl<T: ListableItem + std::marker::Sync + std::marker::Send> UiElement for Deta
             out.queue(next_line)?;
             out.queue(PrintStyledContent(self.get_header(self.is_current())))?;
             for (line, content) in buffer.into_iter().enumerate() {
-                if let Some(next_line) = self.get_next_line(line+1) {
+                if let Some(next_line) = self.get_next_line(line + 1) {
                     out.queue(next_line)?;
                     out.queue(PrintStyledContent(content))?;
                 }
@@ -378,12 +363,7 @@ impl<'a, T: ListableItem + Send + Sync> UiList<'a, T> for DetailWindow<T> {
         &self.bounds
     }
 
-    fn new(
-        items: Arc<Mutex<Vec<T>>>,
-        bounds: Rect,
-        current: bool,
-        _selected_item: usize,
-    ) -> Self {
+    fn new(items: Arc<Mutex<Vec<T>>>, bounds: Rect, current: bool, _selected_item: usize) -> Self {
         DetailWindow {
             bounds,
             current,

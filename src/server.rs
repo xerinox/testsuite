@@ -1,14 +1,14 @@
+use crate::EndpointContent;
 use crate::Message;
-use crate::ResponseContent;
 use anyhow::Result;
+use indexmap::IndexMap;
 use nanohttp::{Method, Request as HttpRequest, Response as HttpResponse, Status};
 use std::net::SocketAddr;
-use std::str::from_utf8;
 use std::sync::Arc;
-use indexmap::IndexMap;
 use testsuite::ResponseMessage;
+use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc;
-use tokio::{ io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
+use tokio::{io::AsyncWriteExt, io::BufReader, net::tcp::OwnedReadHalf, net::TcpStream};
 
 pub async fn push_message(tx: mpsc::Sender<Message>, message: Message) {
     tx.send(message).await.unwrap();
@@ -16,7 +16,7 @@ pub async fn push_message(tx: mpsc::Sender<Message>, message: Message) {
 
 async fn handle(
     req: HttpRequest,
-    map: &Arc<IndexMap<String, ResponseContent>>,
+    map: &Arc<IndexMap<String, EndpointContent>>,
     addr: SocketAddr,
     sender: mpsc::Sender<Message>,
 ) -> HttpResponse {
@@ -28,7 +28,12 @@ async fn handle(
                     let response = HttpResponse::content(content, &format).status(Status::Ok);
                     push_message(
                         sender,
-                        Message::Response(ResponseMessage::new(addr, &response)),
+                        Message::Response(ResponseMessage::new(
+                            addr,
+                            &response,
+                            Some(Method::GET),
+                            Some(Status::Ok),
+                        )),
                     )
                     .await;
                     response
@@ -36,7 +41,12 @@ async fn handle(
                     let response = HttpResponse::empty().status(Status::Ok);
                     push_message(
                         sender,
-                        Message::Response(ResponseMessage::new(addr, &response)),
+                        Message::Response(ResponseMessage::new(
+                            addr,
+                            &response,
+                            Some(Method::GET),
+                            Some(Status::Ok),
+                        )),
                     )
                     .await;
                     response
@@ -45,7 +55,12 @@ async fn handle(
                 let response = HttpResponse::empty().status(Status::NotFound);
                 push_message(
                     sender,
-                    Message::Response(ResponseMessage::new(addr, &response)),
+                    Message::Response(ResponseMessage::new(
+                        addr,
+                        &response,
+                        Some(Method::GET),
+                        Some(Status::NotFound),
+                    )),
                 )
                 .await;
                 response
@@ -57,7 +72,12 @@ async fn handle(
                 let response = HttpResponse::content(&req.body, &format).status(Status::Ok);
                 push_message(
                     sender,
-                    Message::Response(ResponseMessage::new(addr, &response)),
+                    Message::Response(ResponseMessage::new(
+                        addr,
+                        &response,
+                        Some(Method::POST),
+                        Some(Status::Ok),
+                    )),
                 )
                 .await;
                 response
@@ -65,7 +85,12 @@ async fn handle(
                 let response = HttpResponse::empty().status(Status::NotFound);
                 push_message(
                     sender,
-                    Message::Response(ResponseMessage::new(addr, &response)),
+                    Message::Response(ResponseMessage::new(
+                        addr,
+                        &response,
+                        Some(Method::POST),
+                        Some(Status::NotFound),
+                    )),
                 )
                 .await;
                 response
@@ -77,21 +102,28 @@ async fn handle(
 
 pub async fn handle_connection(
     addr: SocketAddr,
-    mut stream: TcpStream,
-    map: &Arc<IndexMap<String, ResponseContent>>,
+    stream: TcpStream,
+    map: &Arc<IndexMap<String, EndpointContent>>,
     sender: tokio::sync::mpsc::Sender<Message>,
 ) -> Result<()> {
     push_message(sender.clone(), Message::ConnectionReceived(Some(addr))).await;
 
-    let mut buffer = [0; 1024];
-    stream.read_exact(&mut buffer).await?;
+    let (mut read_half, mut write_half) = stream.into_split();
+    let received = read_stream(&mut read_half).await?;
 
-    let req_text = from_utf8(&buffer).unwrap().trim_end_matches('\0');
-    let req = HttpRequest::from_string(req_text).unwrap();
-    let res = handle(req, map, addr, sender)
-    .await;
-
-    stream.write_all(res.to_string().as_bytes()).await?;
-    stream.flush().await.unwrap();
+    let req = HttpRequest::from_string(&received).unwrap();
+    let res = handle(req, map, addr, sender).await;
+    write_half.write_all(res.to_string().as_bytes()).await?;
+    write_half.flush().await.unwrap();
     Ok(())
+}
+
+async fn read_stream(stream: &mut OwnedReadHalf) -> anyhow::Result<String> {
+    // 8kb internal buffer
+    let mut reader = BufReader::new(stream);
+    let received: Vec<u8> = reader.fill_buf().await?.to_vec();
+    //process?
+    //TODO: chunking of data if over 8kb
+    reader.consume(received.len());
+    Ok(String::from_utf8(received)?)
 }
