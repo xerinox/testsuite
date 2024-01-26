@@ -338,11 +338,7 @@ impl TuiState {
         }
 
         let mut out = out.lock().await;
-        out.queue(crossterm::cursor::MoveTo(17, 17))?;
-        out.queue(crossterm::style::Print(format!(
-            "{:?}",
-            self.connections_cache
-        )))?;
+        debug!("Connections cache: {:?}", self.connections_cache);
 
         out.flush()?;
         Ok(())
@@ -408,7 +404,9 @@ pub async fn parse_cli_event(
                         let mut tuistate = tuistate.lock().await;
                         match tuistate.history.current.0 {
                             Screen::List => {
-                                tuistate.history.push((Screen::Details, Select::Member(0)));
+                                if !tuistate.connections_cache.is_empty() {
+                                    tuistate.history.push((Screen::Details, Select::Member(0)));
+                                }
                             }
                             Screen::Details => {
                                 tuistate

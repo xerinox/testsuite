@@ -99,19 +99,27 @@ impl<'a, T: ListableItem + Send + Sync> UiList<'a, T> for AddressList<T> {
     }
 
     async fn print(&self) -> Vec<StyledContent<String>> {
+        let (height, width) = (UiList::bounds(self).height(), UiList::bounds(self).width());
+        let mut buffer: Vec<StyledContent<String>> = vec![
+            StyleVariants::get_styled_item(
+                format!("{:width$.width$}", ""),
+                StyleVariants::Selected(false)
+            );
+            height
+        ];
         self.list
             .lock()
             .await
             .iter()
             .enumerate()
             .take(UiList::bounds(self).height())
-            .map(|(index, address)| {
-                address.print(
+            .for_each(|(index, address)| {
+                buffer[index] = address.print(
                     index == self.get_selected_index(),
                     UiList::bounds(self).width(),
-                )
-            })
-            .collect()
+                );
+            });
+        buffer
     }
     fn bounds(&self) -> &Rect {
         &self.bounds
@@ -256,14 +264,24 @@ impl<T: ListableItem + std::marker::Sync + std::marker::Send> ConnectionsList<T>
         groups: Arc<Mutex<Vec<T>>>,
         selectedgroup: usize,
     ) -> Vec<StyledContent<String>> {
+        let (height, width) = (UiList::bounds(self).height(), UiList::bounds(self).width());
+        let mut buffer = vec![
+            StyleVariants::get_styled_item(
+                format!("{:width$.width$}", ""),
+                StyleVariants::Selected(false)
+            );
+            height
+        ];
         groups
             .lock()
             .await
             .iter()
             .enumerate()
             .take(UiElement::bounds(self).height())
-            .map(|(index, item)| item.print(selectedgroup == index, UiList::bounds(self).width()))
-            .collect()
+            .for_each(|(index, item)| {
+                buffer[index] = item.print(selectedgroup == index, UiList::bounds(self).width())
+            });
+        buffer
     }
 
     pub fn default(
@@ -372,13 +390,24 @@ impl<'a, T: ListableItem + Send + Sync> UiList<'a, T> for DetailWindow<T> {
         }
     }
     async fn print(&self) -> Vec<StyledContent<String>> {
+        let (height, width) = (UiList::bounds(self).height(), UiList::bounds(self).width());
+        let mut buffer = vec![
+            StyleVariants::get_styled_item(
+                format!("{:width$.width$}", ""),
+                StyleVariants::Selected(false)
+            );
+            height
+        ];
         self.details
             .lock()
             .await
             .iter()
+            .enumerate()
             .take(UiList::bounds(self).height())
-            .map(|line| line.print(false, UiList::bounds(self).width()))
-            .collect()
+            .for_each(|(index, line)| {
+                buffer[index] = line.print(false, UiList::bounds(self).width());
+            });
+        buffer
     }
     fn get_selected_index(&self) -> usize {
         todo!()
