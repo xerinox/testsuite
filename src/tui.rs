@@ -5,7 +5,7 @@ pub mod style;
 use chrono::Utc;
 use crossterm::{
     event::Event,
-    event::{KeyCode, KeyModifiers},
+    event::{KeyCode, KeyEventKind, KeyModifiers},
     QueueableCommand,
 };
 use elements::*;
@@ -384,45 +384,47 @@ pub async fn parse_cli_event(
         let mut out = out.lock().await;
         match event {
             Event::Key(key) => {
-                let (letter, modifier) = (key.code, key.modifiers);
-                match (letter, modifier) {
-                    (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                        *exit_reason = Some("Pressed ctrl+q".to_string());
-                    }
-                    (KeyCode::Up, KeyModifiers::NONE) => {
-                        let mut tuistate = tuistate.lock().await;
-                        tuistate.history.current.1.sub(1);
-                    }
-                    (KeyCode::Down, KeyModifiers::NONE) => {
-                        let mut tuistate = tuistate.lock().await;
-                        let max_select_size = tuistate.get_max_select_size();
-                        tuistate.history.current.1.add(1, max_select_size);
-                    }
-                    (KeyCode::Right, KeyModifiers::NONE) => {}
-                    (KeyCode::Left, KeyModifiers::NONE) => {}
-                    (KeyCode::Enter, KeyModifiers::NONE) => {
-                        let mut tuistate = tuistate.lock().await;
-                        match tuistate.history.current.0 {
-                            Screen::List => {
-                                if !tuistate.connections_cache.is_empty() {
-                                    tuistate.history.push((Screen::Details, Select::Member(0)));
-                                }
-                            }
-                            Screen::Details => {
-                                tuistate
-                                    .history
-                                    .push((Screen::Detail, Select::Unselectable));
-                            }
-                            Screen::Detail => {}
+                let (letter, modifier, kind) = (key.code, key.modifiers, key.kind);
+                if let KeyEventKind::Press = kind {
+                    match (letter, modifier) {
+                        (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                            *exit_reason = Some("Pressed ctrl+q".to_string());
                         }
-                    }
-                    (KeyCode::Esc, KeyModifiers::NONE) => {
-                        tuistate.lock().await.history.pop();
-                    }
-                    _ => {
-                        out.write_all(format!("Got letter: {key:?}").as_bytes())?;
-                    }
-                };
+                        (KeyCode::Up, KeyModifiers::NONE) => {
+                            let mut tuistate = tuistate.lock().await;
+                            tuistate.history.current.1.sub(1);
+                        }
+                        (KeyCode::Down, KeyModifiers::NONE) => {
+                            let mut tuistate = tuistate.lock().await;
+                            let max_select_size = tuistate.get_max_select_size();
+                            tuistate.history.current.1.add(1, max_select_size);
+                        }
+                        (KeyCode::Right, KeyModifiers::NONE) => {}
+                        (KeyCode::Left, KeyModifiers::NONE) => {}
+                        (KeyCode::Enter, KeyModifiers::NONE) => {
+                            let mut tuistate = tuistate.lock().await;
+                            match tuistate.history.current.0 {
+                                Screen::List => {
+                                    if !tuistate.connections_cache.is_empty() {
+                                        tuistate.history.push((Screen::Details, Select::Member(0)));
+                                    }
+                                }
+                                Screen::Details => {
+                                    tuistate
+                                        .history
+                                        .push((Screen::Detail, Select::Unselectable));
+                                }
+                                Screen::Detail => {}
+                            }
+                        }
+                        (KeyCode::Esc, KeyModifiers::NONE) => {
+                            tuistate.lock().await.history.pop();
+                        }
+                        _ => {
+                            out.write_all(format!("Got letter: {key:?}").as_bytes())?;
+                        }
+                    };
+                }
             }
             Event::FocusGained => {}
             Event::FocusLost => {}
