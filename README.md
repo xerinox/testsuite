@@ -27,15 +27,14 @@ Options:
 ```
 
 # TUI 
-Contains two views, address list (incoming connection IPs) and details list, showing each connection in more detail.
-Trying to press enter on a detail will panic with todo.
+Shows a list of incoming IPs,
+Selecting one will list the IP's connections
 
+Selecting a connection will open up a detail view, containing the response
 
-- <kbd>Up</kbd> / <kbd>Down</kbd> Move in list
-- <kbd>Enter</kbd> - Select item for further inspection
+- <kbd>↑/↓</kbd> - Move cursor
+- <kbd>Enter</kbd> - Select item
 - <kbd>Esc</kbd> - Go back to previous view
-
-
 
 ## Examples:
 ### Json file:
