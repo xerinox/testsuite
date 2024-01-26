@@ -2,7 +2,7 @@ name: Rust
 
 on:
   push:
-    branches: [feature-tui-upgrade]
+    branches: [main]
   pull_request:
     branches: [ main ]
 
