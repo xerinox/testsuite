@@ -7,6 +7,10 @@ use std::sync::Arc;
 
 use futures::lock::Mutex;
 use std::time::Duration;
+#[macro_use] extern crate log;
+extern crate simplelog;
+use simplelog::*;
+use std::fs::File;
 use indexmap::IndexMap;
 use tokio::sync::mpsc::channel;
 mod tui;
@@ -30,6 +34,12 @@ async fn main() -> Result<(), anyhow::Error> {
     let connections_ref: Arc<Mutex<Connections>> = Arc::new(Mutex::new(Connections::new())); //connections_mutex
 
     let args = Arguments::parse();
+
+
+    CombinedLogger::init(vec![
+        WriteLogger::new(args.log.log_filter.clone().into(), Config::default(), File::create(args.log.log_file.clone()).unwrap())
+    ]).unwrap();
+
     let port = args.port;
 
     let map = populate_map(&args);
@@ -48,19 +58,16 @@ async fn main() -> Result<(), anyhow::Error> {
         let request_sender = request_sender.clone();
         let reference = Arc::clone(&map_ref);
         loop {
-            if let Ok((socket, addr)) = listener.accept().await {
-                let sender = request_sender.clone();
-                if let Err(err) = handle_connection(addr, socket, &reference, 
-                    sender.clone()
-                )
-                .await
-                {
-                    push_message(sender, Message::ConnectionFailed).await;
-                    eprintln!(
-                        "{} {}",
-                        "Error handling connection:",
-                        err.to_string()
-                    );
+            match listener.accept().await {
+                Ok((socket, addr)) => {
+                    if let Err(err) = handle_connection(addr, socket, &reference, request_sender.clone()).await
+                    {
+                        warn!("Could not parse request from address: {:}, error:{:}", addr, err);
+                        let _ = request_sender.send(Message::ConnectionFailed(ConnectionFailedError::Parsing((addr, err)))).await;
+                    }
+                },
+                Err(err) => {
+                        warn!("Could not receive connection:{:}", err);
                 }
             }
         }
@@ -97,7 +104,7 @@ async fn main() -> Result<(), anyhow::Error> {
         tokio::select! {
             _ = delay => {
                 if let Err(err) = parse_cli_event(None, Arc::clone(&out), Arc::clone(&tuistate), &mut exit_reason).await{
-                    format!("Error in cli tick: {err:?}");
+                    warn!("{err:}");
                 }
             }
             Some(Ok(event)) = reader.next().fuse() => {
@@ -105,7 +112,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 match parse_cli_event(Some(event), Arc::clone(&out), tuistate, &mut exit_reason).await {
                     Ok(()) => {},
                     Err(err) => {
-                        format!("Error in cli parse: {err:?}");
+                        error!("{:}", err)
                     }
                 }
             }

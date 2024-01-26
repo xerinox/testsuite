@@ -1,9 +1,31 @@
 use clap::{Args, Parser};
+use log::{warn, info};
+use log::LevelFilter;
 use anyhow::Result;
 use nanohttp::Response;
 use serde::Serialize;
 use indexmap::IndexMap;
 use std::{error::Error, fmt::Display, fs, path::PathBuf, str::FromStr, net::SocketAddr};
+
+#[derive(Clone, clap::ValueEnum, Default, Debug)]
+pub enum LogType {
+    Info,
+    Warn,
+    #[default]
+    Error,
+    Debug,
+}
+
+impl From<LogType> for LevelFilter {
+    fn from(val: LogType) -> Self  {
+        match val {
+            LogType::Info => LevelFilter::Info,
+            LogType::Warn => LevelFilter::Warn,
+            LogType::Error => LevelFilter::Error,
+            LogType::Debug => LevelFilter::Debug,
+        }
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -23,7 +45,10 @@ pub struct Arguments {
     pub endpoint: String,
 
     #[arg(short, long, default_value_t = false)]
-    pub allow_remote: bool
+    pub allow_remote: bool,
+    
+    #[command(flatten)]
+    pub log: Log
 }
 
 #[derive(Args, Debug)]
@@ -39,6 +64,17 @@ pub struct Content {
 
     #[arg(long)]
     pub content_folder: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+pub struct Log {
+    /// Turn logging on
+    #[arg(short, long, default_value_t=false)]
+    pub log: bool,
+    #[arg(long, default_value="./testsuite.log")]
+    pub log_file: PathBuf,
+    #[arg(long, default_value_t, value_enum)]
+    pub log_filter: LogType
 }
 
 #[derive(clap::ValueEnum, Clone, Default, Debug, Serialize)]
@@ -184,7 +220,7 @@ impl ResponseContent {
                             Some(some)
                         },
                         Err(e) => {
-                            eprintln!("{}", format!("Error: could not read directory: {:?}", e));
+                            warn!("{}", format!("Error: could not read directory: {:?}", e));
                             None
                         }
                     }).filter_map(|file| {
@@ -205,11 +241,11 @@ impl ResponseContent {
                                     Some((ResponseFormat::Html, file.path()))
                                 },
                                 (_, Some(_)) => {
-                                    eprintln!("{}", format!("File: {} does not have a valid extension [html, json]", file.path().to_str()?));
+                                    info!("{}", format!("File: {} does not have a valid extension [html, json]", file.path().to_str()?));
                                     None
                                 },
                                 (Some(_), None) => {
-                                    eprintln!("{}", format!("File: {} does not have a file name for use in endpoint generation", file.path().to_str()?));
+                                    info!("{}", format!("File: {} does not have a file name for use in endpoint generation", file.path().to_str()?));
                                     None
                                 },
                                 _ => {
@@ -217,7 +253,7 @@ impl ResponseContent {
                                 }
                             }
                         } else {
-                            eprintln!("{}", format!("File: {} does not have an extension, valid extensions are [html, json]", file.path().to_str()?));
+                            info!("{}", format!("File: {} does not have an extension, valid extensions are [html, json]", file.path().to_str()?));
                             None
                         }
 
@@ -273,7 +309,7 @@ pub fn populate_map(args: &Arguments) -> IndexMap<String, ResponseContent> {
                     map.extend(map_b)
                 }
                 Err(e) => {
-                    eprintln!("Error while parsing content folder: {:?}", e);
+                    warn!("Error while parsing content folder: {:?}", e);
                 }
             }
         }
@@ -283,4 +319,3 @@ pub fn populate_map(args: &Arguments) -> IndexMap<String, ResponseContent> {
     }
     map
 }
-

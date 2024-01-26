@@ -473,7 +473,34 @@ impl TuiResponse {
 pub async fn handle_message(message: Message, connections: Arc<Mutex<Connections>>) {
     let mut connections = connections.lock().await;
     match message {
-        Message::ConnectionFailed => {}
+        Message::ConnectionFailed(error) => match error {
+            ConnectionFailedError::Connection(error) => {
+                info!("{:?}", error);
+            },
+            ConnectionFailedError::Parsing(error) => match connections.get_mut(&error.0.ip()) {
+                Some(existing_connection) => existing_connection.push(TuiResponse {
+                    content: Some(format!("Error: {:}", error.1)),
+                    addr: error.0,
+                    format: None,
+                    time: Utc::now().to_rfc3339(),
+                    status: Some(Status::InternalServerError),
+                    method: None,
+                }),
+                None => {
+                    connections.insert(
+                        error.0.ip(),
+                        vec![TuiResponse {
+                            content: Some(format!("Error: {:}", error.1)),
+                            addr: error.0,
+                            format: None,
+                            time: Utc::now().to_rfc3339(),
+                            status: Some(Status::InternalServerError),
+                            method: None,
+                        }],
+                    );
+                }
+            },
+        },
         Message::Response(message) => match connections.get_mut(&message.addr.ip()) {
             Some(data) => {
                 let r = TuiResponse {
