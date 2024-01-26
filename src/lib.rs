@@ -223,7 +223,7 @@ impl EndpointContent {
             if path.is_dir() {
                 Ok(fs::read_dir(path).map_err(|e| 
                         FolderError {
-                            error: format!("{}", e.to_string())
+                            error: format!("{}", e)
                         })
                     ?.filter_map(|file| match file {
                         Ok(some) => {
