@@ -10,8 +10,6 @@ codegen-units = 1
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
-default = ["multithreaded"]
-multithreaded = []
 
 [dependencies]
 anyhow = "1.0.79"
