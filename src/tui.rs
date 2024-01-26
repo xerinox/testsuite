@@ -86,11 +86,17 @@ pub struct History {
 }
 
 impl History {
-    pub fn peek_prev(&self) -> Option<&(Screen, Select)> {
-        if self.prev.len() < 1 {
-            None
+    pub fn peek_prev(&self, n: usize) -> Option<&(Screen, Select)> {
+        if n < 1 {
+            return Some(&self.current)
+        }
+        let item:Vec<&(Screen, Select)> = self.prev.iter().rev().skip(n-1).take(1).map(|x|  {
+            x
+        }).collect();
+        if item.len() == 1 {
+            Some(item[0])
         } else {
-            self.prev.last()
+            None
         }
     }
     pub fn pop(&mut self) {
@@ -270,7 +276,7 @@ impl TuiState {
                     let mut connection_list_items: Vec<TuiResponse> = vec![];
 
 
-                    if let Some((_, address)) = self.history.peek_prev() {
+                    if let Some((_, address)) = self.history.peek_prev(1) {
                         if let Select::Addr(address) = address {
                             let addresses = Arc::from(Mutex::new(
                                 self.connections_cache
@@ -346,7 +352,7 @@ impl TuiState {
             },
 
             Screen::Details => {
-                if let Some((_, addr)) = self.history.peek_prev() {
+                if let Some((_, addr)) = self.history.peek_prev(1) {
                     if let Some(details) = self.connections_cache.get_index(addr.into()) {
                         match details.1.is_empty() {
                             false => details.1.len().checked_sub(1).unwrap_or(0),
