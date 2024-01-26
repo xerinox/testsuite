@@ -112,12 +112,18 @@ async fn main() -> Result<(), anyhow::Error> {
             }
         }
     };
+
+    execute!(std::io::stdout(),
+    crossterm::cursor::Show
+    )?;
+
     out.lock().await.queue(crossterm::terminal::Clear(
         crossterm::terminal::ClearType::All,
     ))?;
     out.lock().await.queue(crossterm::cursor::MoveTo(0, 0))?;
     println!("Shutting down server due to: {shutdown_reason}");
     out.lock().await.queue(crossterm::cursor::MoveTo(0, 1))?;
+
     message_client.abort();
     server.abort();
     disable_raw_mode()?;

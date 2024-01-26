@@ -35,6 +35,7 @@ pub struct TuiState {
 pub enum Screen {
     List,
     Details,
+    Detail,
 }
 
 impl From<Screen> for usize {
@@ -42,6 +43,7 @@ impl From<Screen> for usize {
         match input {
             Screen::List => 0,
             Screen::Details => 1,
+            Screen::Detail => 2,
         }
     }
 }
@@ -75,6 +77,7 @@ impl Rect {
 pub enum Select {
     Addr(usize),
     Member(usize),
+    Unselectable,
 }
 
 #[derive(Debug)]
@@ -84,11 +87,17 @@ pub struct History {
 }
 
 impl History {
-    pub fn peek_prev(&self) -> Option<&(Screen, Select)> {
-        if self.prev.len() < 1 {
-            None
+    pub fn peek_prev(&self, n: usize) -> Option<&(Screen, Select)> {
+        if n < 1 {
+            return Some(&self.current)
+        }
+        let item:Vec<&(Screen, Select)> = self.prev.iter().rev().skip(n-1).take(1).map(|x|  {
+            x
+        }).collect();
+        if item.len() == 1 {
+            Some(item[0])
         } else {
-            self.prev.last()
+            None
         }
     }
     pub fn pop(&mut self) {
@@ -119,6 +128,7 @@ impl Select {
         match &self {
             Self::Addr(_) => *self = Self::Addr(parsed_value),
             Self::Member(_) => *self = Self::Member(parsed_value),
+            Self::Unselectable => *self = Self::Unselectable,
         }
     }
 
@@ -131,6 +141,9 @@ impl Select {
             Self::Member(inner) => {
                 return inner == value;
             }
+            Self::Unselectable => {
+                return false
+            }
         }
     }
 
@@ -142,12 +155,16 @@ impl Select {
             Self::Member(value) => {
                 Self::Member(value.checked_sub(subtract).unwrap_or(0))
             },
+            Self::Unselectable => {
+                Self::Unselectable
+            }
         }
     }
     pub fn add(&mut self, add: usize, max_value: usize){
         *self = match self {
             Self::Addr(value) => Self::Addr(value.checked_add(add).unwrap_or(usize::MAX).clamp(0,max_value)),
             Self::Member(value) => Self::Member(value.checked_add(add).unwrap_or(usize::MAX).clamp(0, max_value)),
+            Self::Unselectable => Self::Unselectable,
         }
     }
 }
@@ -157,6 +174,7 @@ impl Into<usize> for Select {
         match self {
             Self::Addr(value) => value,
             Self::Member(value) => value,
+            Self::Unselectable => 0,
         }
     }
 }
@@ -244,6 +262,7 @@ impl TuiState {
                         selected_address.into(),
                     );
 
+
                     {
                         let out = Arc::clone(&out);
                         address_list
@@ -268,7 +287,7 @@ impl TuiState {
                     let mut connection_list_items: Vec<TuiResponse> = vec![];
 
 
-                    if let Some((_, address)) = self.history.peek_prev() {
+                    if let Some((_, address)) = self.history.peek_prev(1) {
                         if let Select::Addr(address) = address {
                             let addresses = Arc::from(Mutex::new(
                                 self.connections_cache
@@ -316,6 +335,31 @@ impl TuiState {
                             })
                             .await?;
                     }
+                },
+                (Screen::Detail, _selected_detail) => {
+                    let detail_bounds = Rect {
+                        cols: (0, self.window_size.cols.1),
+                        rows: (1, self.window_size.rows.1),
+                    };
+
+                    if let Some((Screen::List, Select::Addr(address))) = self.history.peek_prev(2) {
+                        if let Some((address, responses)) = self.connections_cache.get_index(*address) {
+                            if let Some((Screen::Details, Select::Member(member)))  = self.history.peek_prev(1) {
+                                if let Some(response ) = responses.get(*member) {
+                                    let response_content = &response.http_response.content;
+                                    if let Some(content) = response_content {
+                                        let content = content.trim().lines().map(|x| {
+                                            x
+                                        }).collect_vec();
+                                        let content = Arc::from(Mutex::new(content));
+                                        let detail = DetailWindow::default(detail_bounds, content, true, address.to_string());
+                                        let out = Arc::clone(&out);
+                                        detail.render(out).await?;
+                                    }
+                                } 
+                            } 
+                        } 
+                    } 
                 }
             }
         }
@@ -338,7 +382,7 @@ impl TuiState {
             },
 
             Screen::Details => {
-                if let Some((_, addr)) = self.history.peek_prev() {
+                if let Some((_, addr)) = self.history.peek_prev(1) {
                     if let Some(details) = self.connections_cache.get_index(addr.into()) {
                         match details.1.is_empty() {
                             false => details.1.len().checked_sub(1).unwrap_or(0),
@@ -350,6 +394,9 @@ impl TuiState {
                 } else {
                     0
                 }
+            }
+            Screen::Detail => {
+                0
             }
         }
     }
@@ -386,10 +433,12 @@ pub async fn parse_cli_event(
                         let mut tuistate = tuistate.lock().await;
                         match tuistate.history.current.0 {
                             Screen::List => {
-                                tuistate.history.push((Screen::Details, Select::Addr(0)));
+                                tuistate.history.push((Screen::Details, Select::Member(0)));
                             }
                             Screen::Details => {
-                                todo!();
+                                tuistate.history.push((Screen::Detail, Select::Unselectable));
+                            },
+                            Screen::Detail => {
                             }
                         }
                     }
@@ -424,6 +473,15 @@ pub struct TuiResponse {
     addr: SocketAddr,
     http_response: ResponseContent,
     time: String,
+}
+impl TuiResponse {
+    fn get_response_as_line(&self) -> String {
+        if let Some(content) = &self.http_response.content {
+            content.lines().map(|x| {x.to_string() + " "}).collect()
+        } else {
+            "No content".to_string()
+        }
+    }
 }
 
 pub async fn handle_message(message: Message, connections: Arc<Mutex<Connections>>) {
