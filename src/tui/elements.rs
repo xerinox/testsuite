@@ -36,6 +36,21 @@ impl ListableItem for IpAddr {
     }
 }
 
+impl ListableItem for TuiResponse {
+    fn print(&self, is_selected: bool, max_length: usize) -> StyledContent<String> {
+        let content = self.get_response_as_line();
+        match is_selected {
+            true => StyleVariants::get_styled_item(
+                self.size_text(&content, max_length),
+                StyleVariants::Selected(true),
+            ),
+            false => StyleVariants::get_styled_item(
+                self.size_text(&content, max_length),
+                StyleVariants::Selected(false),
+            ),
+        }
+    }
+}
 
 impl ListableItem for &str {
     fn print(&self, is_selected: bool, max_length: usize) -> StyledContent<String> {
@@ -177,39 +192,6 @@ impl<T: ListableItem + Send + Sync + Clone> AddressList<T> {
             current,
             bounds,
             selected_item,
-        }
-    }
-}
-
-impl ListableItem for TuiResponse {
-    fn print(&self, is_selected: bool, max_length: usize) -> StyledContent<String> {
-        match is_selected {
-            true => {
-                if let Some(response) = &self.http_response.content {
-                    StyleVariants::get_styled_item(
-                        self.size_text(response, max_length),
-                        StyleVariants::Selected(true),
-                    )
-                } else {
-                    StyleVariants::get_styled_item(
-                        self.size_text("No response", max_length),
-                        StyleVariants::Selected(true),
-                    )
-                }
-            }
-            false => {
-                if let Some(response) = &self.http_response.content {
-                    StyleVariants::get_styled_item(
-                        self.size_text(response, max_length),
-                        StyleVariants::Selected(false),
-                    )
-                } else {
-                    StyleVariants::get_styled_item(
-                        self.size_text("No response", max_length),
-                        StyleVariants::Selected(false),
-                    )
-                }
-            }
         }
     }
 }

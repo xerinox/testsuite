@@ -474,6 +474,15 @@ pub struct TuiResponse {
     http_response: ResponseContent,
     time: String,
 }
+impl TuiResponse {
+    fn get_response_as_line(&self) -> String {
+        if let Some(content) = &self.http_response.content {
+            content.lines().map(|x| {x.to_string() + " "}).collect()
+        } else {
+            "No content".to_string()
+        }
+    }
+}
 
 pub async fn handle_message(message: Message, connections: Arc<Mutex<Connections>>) {
     let mut connections = connections.lock().await;
