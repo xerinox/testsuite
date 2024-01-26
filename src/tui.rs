@@ -77,6 +77,7 @@ impl Rect {
 pub enum Select {
     Addr(usize),
     Member(usize),
+    Unselectable,
 }
 
 #[derive(Debug)]
@@ -127,6 +128,7 @@ impl Select {
         match &self {
             Self::Addr(_) => *self = Self::Addr(parsed_value),
             Self::Member(_) => *self = Self::Member(parsed_value),
+            Self::Unselectable => *self = Self::Unselectable,
         }
     }
 
@@ -139,6 +141,9 @@ impl Select {
             Self::Member(inner) => {
                 return inner == value;
             }
+            Self::Unselectable => {
+                return false
+            }
         }
     }
 
@@ -150,12 +155,16 @@ impl Select {
             Self::Member(value) => {
                 Self::Member(value.checked_sub(subtract).unwrap_or(0))
             },
+            Self::Unselectable => {
+                Self::Unselectable
+            }
         }
     }
     pub fn add(&mut self, add: usize, max_value: usize){
         *self = match self {
             Self::Addr(value) => Self::Addr(value.checked_add(add).unwrap_or(usize::MAX).clamp(0,max_value)),
             Self::Member(value) => Self::Member(value.checked_add(add).unwrap_or(usize::MAX).clamp(0, max_value)),
+            Self::Unselectable => Self::Unselectable,
         }
     }
 }
@@ -165,6 +174,7 @@ impl Into<usize> for Select {
         match self {
             Self::Addr(value) => value,
             Self::Member(value) => value,
+            Self::Unselectable => 0,
         }
     }
 }
@@ -251,6 +261,7 @@ impl TuiState {
                         true,
                         selected_address.into(),
                     );
+
 
                     {
                         let out = Arc::clone(&out);
