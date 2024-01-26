@@ -341,6 +341,25 @@ impl TuiState {
                         cols: (0, self.window_size.cols.1),
                         rows: (1, self.window_size.rows.1),
                     };
+
+                    if let Some((Screen::List, Select::Addr(address))) = self.history.peek_prev(2) {
+                        if let Some((address, responses)) = self.connections_cache.get_index(*address) {
+                            if let Some((Screen::Details, Select::Member(member)))  = self.history.peek_prev(1) {
+                                if let Some(response ) = responses.get(*member) {
+                                    let response_content = &response.http_response.content;
+                                    if let Some(content) = response_content {
+                                        let content = content.trim().lines().map(|x| {
+                                            x
+                                        }).collect_vec();
+                                        let content = Arc::from(Mutex::new(content));
+                                        let detail = DetailWindow::default(detail_bounds, content, true, address.to_string());
+                                        let out = Arc::clone(&out);
+                                        detail.render(out).await?;
+                                    }
+                                } 
+                            } 
+                        } 
+                    } 
                 }
             }
         }

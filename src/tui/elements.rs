@@ -36,6 +36,19 @@ impl ListableItem for IpAddr {
     }
 }
 
+
+impl ListableItem for &str {
+    fn print(&self, is_selected: bool, max_length: usize) -> StyledContent<String> {
+        StyleVariants::get_styled_item(
+            self.size_text(&self, max_length),
+            StyleVariants::Selected(is_selected),
+        )
+    }
+    fn size_text(&self, text: &str, max_length: usize) -> String {
+        format!("{:max_length$.max_length$}", text)
+    }
+}
+
 #[async_trait]
 /// Trait for defining an UIElement as a list
 pub trait UiList<'a, T: ListableItem>: UiElement {
@@ -332,5 +345,95 @@ impl UiElement for ProgramHeader<'_> {
     }
 }
 
+#[derive(Debug)]
+pub struct DetailWindow<T> {
+    bounds: Rect,
+    current: bool,
+    details: Arc<Mutex<Vec<T>>>,
+    addr: String,
+}
+
+#[async_trait]
+impl<'a, T: ListableItem + std::marker::Sync + std::marker::Send> UiElement for DetailWindow<T> {
+    fn bounds(&self) -> &Rect {
+        &self.bounds
+    }
+    async fn render(self, out: Out) -> anyhow::Result<()> {
+        let buffer: Vec<StyledContent<String>> = UiList::print(&self).await;
+        let mut out = out.lock().await;
+        if let Some(next_line) = self.get_next_line(0) {
+            out.queue(next_line)?;
+            out.queue(PrintStyledContent(self.get_header(self.is_current())))?;
+            for (line, content) in buffer.into_iter().enumerate() {
+                if let Some(next_line) = self.get_next_line(line+1) {
+                    out.queue(next_line)?;
+                    out.queue(PrintStyledContent(content))?;
+                }
+            }
+        }
+        Ok(())
+    }
+    fn is_current(&self) -> bool {
+        self.current
+    }
+    fn get_header(&self, current: bool) -> StyledContent<String> {
+        let width = UiElement::bounds(self).width();
+        StyleVariants::get_styled_item(
+            format!("{:^width$}", &self.addr),
+            StyleVariants::Header(current),
+        )
+    }
+    fn get_next_line(&self, counter: usize) -> Option<MoveTo> {
+        let next_line = self.bounds.rows.0 + counter;
+        if next_line < self.bounds.rows.1 {
+            Some(MoveTo(self.bounds.cols.0 as u16, next_line as u16))
+        } else {
+            None
+        }
+    }
+}
+
+#[async_trait]
+impl<'a, T: ListableItem + Send + Sync> UiList<'a, T> for DetailWindow<T> {
+    fn bounds(&self) -> &Rect {
+        &self.bounds
+    }
+
+    fn new(
+        &self,
+        items: Arc<Mutex<Vec<T>>>,
+        bounds: Rect,
+        current: bool,
+        _selected_item: usize,
+    ) -> Self {
+        DetailWindow {
+            bounds,
+            current,
+            details: items,
+            addr: String::new(),
+        }
+    }
+    async fn print(&self) -> Vec<StyledContent<String>> {
+        self.details
+            .lock()
+            .await
+            .iter()
+            .take(UiList::bounds(self).height())
+            .map(|line| line.print(false, UiList::bounds(self).width()))
+            .collect()
+    }
+    fn get_selected_index(&self) -> usize {
+        todo!()
+    }
+}
+
+impl<T: ListableItem + Send + Sync + Clone> DetailWindow<T> {
+    pub fn default(bounds: Rect, details: Arc<Mutex<Vec<T>>>, current: bool, addr: String) -> Self {
+        DetailWindow {
+            details,
+            current,
+            bounds,
+            addr,
+        }
     }
 }
