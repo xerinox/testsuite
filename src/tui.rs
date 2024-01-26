@@ -35,6 +35,7 @@ pub struct TuiState {
 pub enum Screen {
     List,
     Details,
+    Detail,
 }
 
 impl From<Screen> for usize {
@@ -42,6 +43,7 @@ impl From<Screen> for usize {
         match input {
             Screen::List => 0,
             Screen::Details => 1,
+            Screen::Detail => 2,
         }
     }
 }
@@ -316,6 +318,12 @@ impl TuiState {
                             })
                             .await?;
                     }
+                },
+                (Screen::Detail, _selected_detail) => {
+                    let detail_bounds = Rect {
+                        cols: (0, self.window_size.cols.1),
+                        rows: (1, self.window_size.rows.1),
+                    };
                 }
             }
         }
@@ -350,6 +358,9 @@ impl TuiState {
                 } else {
                     0
                 }
+            }
+            Screen::Detail => {
+                0
             }
         }
     }
@@ -389,7 +400,9 @@ pub async fn parse_cli_event(
                                 tuistate.history.push((Screen::Details, Select::Addr(0)));
                             }
                             Screen::Details => {
-                                todo!();
+                                tuistate.history.push((Screen::Detail, Select::Member(0)));
+                            },
+                            Screen::Detail => {
                             }
                         }
                     }
