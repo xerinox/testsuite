@@ -433,10 +433,10 @@ pub async fn parse_cli_event(
                         let mut tuistate = tuistate.lock().await;
                         match tuistate.history.current.0 {
                             Screen::List => {
-                                tuistate.history.push((Screen::Details, Select::Addr(0)));
+                                tuistate.history.push((Screen::Details, Select::Member(0)));
                             }
                             Screen::Details => {
-                                tuistate.history.push((Screen::Detail, Select::Member(0)));
+                                tuistate.history.push((Screen::Detail, Select::Unselectable));
                             },
                             Screen::Detail => {
                             }
