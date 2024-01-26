@@ -147,7 +147,7 @@ impl ResponseContent {
             content: match path.exists() {
                 true => Some(fs::read_to_string(path).expect("File is unreadable")),
                 false => {
-                    eprintln!("{}", format!("Could not find file: {:}, continuing with blank response", path.to_str().expect("Path is unparseable")));
+                    eprintln!("{}", format_args!("Could not find file: {:}, continuing with blank response", path.to_str().expect("Path is unparseable")));
                     None
                 }
             },
@@ -159,14 +159,14 @@ impl ResponseContent {
     pub fn from_args(args: &Arguments) -> ResponseContent {
         let response_format = &args.format;
         if let Some(content) = &args.content.content {
-            return ResponseContent::from_content(content, response_format);
+            ResponseContent::from_content(content, response_format)
         } else if let Some(p) = &args.content.content_file {
-            return ResponseContent::from_content_file(p, response_format);
+            ResponseContent::from_content_file(p, response_format)
         } else {
-            return ResponseContent {
+            ResponseContent {
                 content: None,
                 format: response_format.to_string(),
-            };
+            }
         }
     }
 
@@ -175,11 +175,11 @@ impl ResponseContent {
     ) -> Result<IndexMap<String, ResponseContent>, FolderError> {
         if path.exists() {
             if path.is_dir() {
-                let paths = fs::read_dir(path).map_err(|e| FolderError {
-                    error: format!("{}", e.to_string()),
-                })?;
-                let map:IndexMap<String, ResponseContent> = paths
-                    .filter_map(|file| match file {
+                Ok(fs::read_dir(path).map_err(|e| 
+                        FolderError {
+                            error: format!("{}", e.to_string())
+                        })
+                    ?.filter_map(|file| match file {
                         Ok(some) => {
                             Some(some)
                         },
@@ -231,14 +231,12 @@ impl ResponseContent {
                                 &format,
                             ))
                     })
-                    .collect();
-
-                return Ok(map);
+                    .collect())
             } else {
-                return Err(FolderError {error: "Path is not a directory".to_string()});
+                Err(FolderError {error: "Path is not a directory".to_string()})
             }
         } else {
-            return Err(FolderError {error: "Path does not exists".to_string()});
+            Err(FolderError {error: "Path does not exists".to_string()})
         }
     }
 }
@@ -254,7 +252,7 @@ pub fn populate_map(args: &Arguments) -> IndexMap<String, ResponseContent> {
         (Some(content), None, None) => {
             map.insert(
                 args.endpoint.clone(),
-                ResponseContent::from_content(&content, &args.format),
+                ResponseContent::from_content(content, &args.format),
             );
         }
         (None, Some(content_file), None) => {
@@ -266,10 +264,10 @@ pub fn populate_map(args: &Arguments) -> IndexMap<String, ResponseContent> {
                 }
                 None => String::from("/"),
             };
-            map.insert(endpoint, ResponseContent::from_content_file(&content_file, &args.format));
+            map.insert(endpoint, ResponseContent::from_content_file(content_file, &args.format));
         }
         (None, None, Some(content_folder)) => {
-            match ResponseContent::from_folder(&content_folder) {
+            match ResponseContent::from_folder(content_folder) {
                 Ok(map_b) => {
                     eprintln!("Valid endpoints: {:?}", map_b.keys().collect::<Vec<_>>());
                     map.extend(map_b)

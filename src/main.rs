@@ -50,10 +50,9 @@ async fn main() -> Result<(), anyhow::Error> {
         loop {
             if let Ok((socket, addr)) = listener.accept().await {
                 let sender = request_sender.clone();
-                if let Err(err) = handle_connection(addr, socket, &reference, {
-                    let sender = sender.clone();
-                    sender
-                })
+                if let Err(err) = handle_connection(addr, socket, &reference, 
+                    sender.clone()
+                )
                 .await
                 {
                     push_message(sender, Message::ConnectionFailed).await;
@@ -83,7 +82,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let message_client = tokio::spawn(async move {
         loop {
             if let Some(message) = request_receiver.recv().await {
-                handle_message(message, {let connections = Arc::clone(&connections_ref); connections}).await;
+                handle_message(message, Arc::clone(&connections_ref)).await;
                 Arc::clone(&tui_ref).lock().await.needs_update = true;
             }
         }
@@ -97,13 +96,13 @@ async fn main() -> Result<(), anyhow::Error> {
         let delay = futures_timer::Delay::new(Duration::from_millis(REFRESH_RATE)).fuse();
         tokio::select! {
             _ = delay => {
-                if let Err(err) = parse_cli_event(None, {let out = Arc::clone(&out); out}, {let tuistate = Arc::clone(&tuistate); tuistate}, &mut exit_reason).await{
+                if let Err(err) = parse_cli_event(None, Arc::clone(&out), Arc::clone(&tuistate), &mut exit_reason).await{
                     format!("Error in cli tick: {err:?}");
                 }
             }
             Some(Ok(event)) = reader.next().fuse() => {
                 let tuistate = Arc::clone(&tuistate);
-                match parse_cli_event(Some(event), {let out = Arc::clone(&out); out}, tuistate,&mut exit_reason).await {
+                match parse_cli_event(Some(event), Arc::clone(&out), tuistate, &mut exit_reason).await {
                     Ok(()) => {},
                     Err(err) => {
                         format!("Error in cli parse: {err:?}");

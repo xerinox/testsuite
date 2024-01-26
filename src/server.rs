@@ -39,7 +39,7 @@ async fn handle(
                         Message::Response(ResponseMessage::new(addr, &response)),
                     )
                     .await;
-                    return response;
+                    response
                 }
             } else {
                 let response = HttpResponse::empty().status(Status::NotFound);
@@ -48,7 +48,7 @@ async fn handle(
                     Message::Response(ResponseMessage::new(addr, &response)),
                 )
                 .await;
-                return response;
+                response
             }
         }
         Method::POST => {
@@ -81,20 +81,17 @@ pub async fn handle_connection(
     map: &Arc<IndexMap<String, ResponseContent>>,
     sender: tokio::sync::mpsc::Sender<Message>,
 ) -> Result<()> {
-    push_message({let sender = sender.clone(); sender}, Message::ConnectionReceived(Some(addr))).await;
+    push_message(sender.clone(), Message::ConnectionReceived(Some(addr))).await;
 
     let mut buffer = [0; 1024];
-    stream.read(&mut buffer).await?;
+    stream.read_exact(&mut buffer).await?;
 
-    let req_text = from_utf8(&buffer).unwrap().trim_end_matches("\0");
+    let req_text = from_utf8(&buffer).unwrap().trim_end_matches('\0');
     let req = HttpRequest::from_string(req_text).unwrap();
-    let res = handle(req, map, addr, {
-        let sender = sender.clone();
-        sender
-    })
+    let res = handle(req, map, addr, sender)
     .await;
 
-    stream.write(res.to_string().as_bytes()).await?;
+    stream.write_all(res.to_string().as_bytes()).await?;
     stream.flush().await.unwrap();
     Ok(())
 }

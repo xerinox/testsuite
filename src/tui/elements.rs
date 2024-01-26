@@ -55,7 +55,7 @@ impl ListableItem for TuiResponse {
 impl ListableItem for &str {
     fn print(&self, is_selected: bool, max_length: usize) -> StyledContent<String> {
         StyleVariants::get_styled_item(
-            self.size_text(&self, max_length),
+            self.size_text(self, max_length),
             StyleVariants::Selected(is_selected),
         )
     }
@@ -68,7 +68,6 @@ impl ListableItem for &str {
 /// Trait for defining an UIElement as a list
 pub trait UiList<'a, T: ListableItem>: UiElement {
     fn new(
-        &self,
         items: Arc<Mutex<Vec<T>>>,
         bounds: Rect,
         current: bool,
@@ -93,7 +92,6 @@ where
 #[async_trait]
 impl<'a, T: ListableItem + Send + Sync> UiList<'a, T> for AddressList<T> {
     fn new(
-        &self,
         items: Arc<Mutex<Vec<T>>>,
         bounds: Rect,
         current: bool,
@@ -207,7 +205,6 @@ pub struct ConnectionsList<T: ListableItem + Sync + Send> {
 #[async_trait]
 impl<'a, T: ListableItem + Send + Sync> UiList<'a, T> for ConnectionsList<T> {
     fn new(
-        &self,
         items: Arc<Mutex<Vec<T>>>,
         bounds: Rect,
         current: bool,
@@ -336,7 +333,7 @@ pub struct DetailWindow<T> {
 }
 
 #[async_trait]
-impl<'a, T: ListableItem + std::marker::Sync + std::marker::Send> UiElement for DetailWindow<T> {
+impl<T: ListableItem + std::marker::Sync + std::marker::Send> UiElement for DetailWindow<T> {
     fn bounds(&self) -> &Rect {
         &self.bounds
     }
@@ -382,7 +379,6 @@ impl<'a, T: ListableItem + Send + Sync> UiList<'a, T> for DetailWindow<T> {
     }
 
     fn new(
-        &self,
         items: Arc<Mutex<Vec<T>>>,
         bounds: Rect,
         current: bool,
