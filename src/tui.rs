@@ -11,10 +11,11 @@ use crossterm::{
 use elements::*;
 use futures::lock::Mutex;
 use itertools::Itertools;
+use nanohttp::Status;
 use std::io::{Stdout, Write};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use testsuite::{ResponseContent, ResponseFormat};
+use testsuite::{ConnectionFailedError, ResponseFormat};
 
 use testsuite::Message;
 
@@ -256,11 +257,7 @@ impl TuiState {
                     );
 
                     {
-                        address_list
-                            .render({
-                                Arc::clone(&out)
-                            })
-                            .await?;
+                        address_list.render(Arc::clone(&out)).await?;
                     }
                 }
                 (Screen::Details, selected_detail) => {
@@ -278,21 +275,14 @@ impl TuiState {
 
                     if let Some((_, Select::Addr(address))) = self.history.peek_prev(1) {
                         let addresses = Arc::from(Mutex::new(
-                            self.connections_cache
-                                .keys()
-                                .copied()
-                                .collect_vec(),
+                            self.connections_cache.keys().copied().collect_vec(),
                         ));
 
                         let address_list =
                             AddressList::default(address_list_bounds, addresses, false, *address);
 
                         {
-                            address_list
-                                .render({
-                                    Arc::clone(&out)
-                                })
-                                .await?;
+                            address_list.render(Arc::clone(&out)).await?;
                         }
                         if let Some((_, items)) = self.connections_cache.get_index(*address) {
                             for item in items.iter() {
@@ -309,11 +299,7 @@ impl TuiState {
                     );
 
                     {
-                        connection_list
-                            .render({
-                                Arc::clone(&out)
-                            })
-                            .await?;
+                        connection_list.render(Arc::clone(&out)).await?;
                     }
                 }
                 (Screen::Detail, _selected_detail) => {
@@ -330,10 +316,9 @@ impl TuiState {
                                 self.history.peek_prev(1)
                             {
                                 if let Some(response) = responses.get(*member) {
-                                    let response_content = &response.http_response.content;
+                                    let response_content = &response.content;
                                     if let Some(content) = response_content {
-                                        let content =
-                                            content.trim().lines().collect_vec();
+                                        let content = content.trim().lines().collect_vec();
                                         let content = Arc::from(Mutex::new(content));
                                         let detail = DetailWindow::default(
                                             detail_bounds,
@@ -353,6 +338,7 @@ impl TuiState {
         }
 
         let mut out = out.lock().await;
+        debug!("Connections cache: {:?}", self.connections_cache);
 
         out.flush()?;
         Ok(())
@@ -418,7 +404,9 @@ pub async fn parse_cli_event(
                         let mut tuistate = tuistate.lock().await;
                         match tuistate.history.current.0 {
                             Screen::List => {
-                                tuistate.history.push((Screen::Details, Select::Member(0)));
+                                if !tuistate.connections_cache.is_empty() {
+                                    tuistate.history.push((Screen::Details, Select::Member(0)));
+                                }
                             }
                             Screen::Details => {
                                 tuistate
@@ -457,12 +445,16 @@ pub async fn parse_cli_event(
 #[allow(dead_code)]
 pub struct TuiResponse {
     addr: SocketAddr,
-    http_response: ResponseContent,
+    content: Option<String>,
     time: String,
+    status: Option<nanohttp::Status>,
+    method: Option<nanohttp::Method>,
+    format: Option<ResponseFormat>,
 }
+
 impl TuiResponse {
     fn get_response_as_line(&self) -> String {
-        if let Some(content) = &self.http_response.content {
+        if let Some(content) = &self.content {
             content.lines().map(|x| x.to_string() + " ").collect()
         } else {
             "No content".to_string()
@@ -473,58 +465,85 @@ impl TuiResponse {
 pub async fn handle_message(message: Message, connections: Arc<Mutex<Connections>>) {
     let mut connections = connections.lock().await;
     match message {
-        Message::ConnectionFailed => {}
-        Message::Response(message) => match connections.get_mut(&message.addr.ip()) {
-            Some(data) => {
-                let r = TuiResponse {
-                    addr: message.addr,
-                    http_response: ResponseContent {
-                        content: Some(message.response.to_string()),
-                        format: ResponseFormat::Json.to_string(),
-                    },
+        Message::ConnectionFailed(error) => match error {
+            ConnectionFailedError::Connection(error) => {
+                info!("{:?}", error);
+            }
+            ConnectionFailedError::Parsing(error) => match connections.get_mut(&error.0.ip()) {
+                Some(existing_connection) => existing_connection.push(TuiResponse {
+                    content: Some(format!("Error: {:}", error.1)),
+                    addr: error.0,
+                    format: None,
                     time: Utc::now().to_rfc3339(),
-                };
-                data.push(r)
+                    status: Some(Status::InternalServerError),
+                    method: None,
+                }),
+                None => {
+                    connections.insert(
+                        error.0.ip(),
+                        vec![TuiResponse {
+                            content: Some(format!("Error: {:}", error.1)),
+                            addr: error.0,
+                            format: None,
+                            time: Utc::now().to_rfc3339(),
+                            status: Some(Status::InternalServerError),
+                            method: None,
+                        }],
+                    );
+                }
+            },
+        },
+        Message::Response(message) => match connections.get_mut(&message.addr.ip()) {
+            Some(existing_connection) => {
+                existing_connection.push(TuiResponse {
+                    status: None,
+                    method: None,
+                    addr: message.addr,
+                    content: Some(message.response.to_string()),
+                    format: Some(ResponseFormat::Json),
+                    time: Utc::now().to_rfc3339(),
+                });
             }
             None => {
                 connections.insert(
                     message.addr.ip(),
                     vec![TuiResponse {
+                        status: None,
+                        method: None,
                         addr: message.addr,
-                        http_response: ResponseContent {
-                            content: Some(message.response.to_string()),
-                            format: ResponseFormat::Json.to_string(),
-                        },
+                        content: Some(message.response.to_string()),
+                        format: Some(ResponseFormat::Json),
                         time: Utc::now().to_rfc3339(),
                     }],
                 );
             }
         },
-        Message::ConnectionReceived(connection) => if let Some(connection) = connection {
-            match connections.get_mut(&connection.ip()) {
-                Some(data) => {
-                    let r = TuiResponse {
-                        addr: connection,
-                        http_response: ResponseContent {
-                            content: Some("Established Connection".to_string()),
-                            format: ResponseFormat::None.to_string(),
-                        },
-                        time: Utc::now().to_rfc3339(),
-                    };
-                    data.push(r);
-                }
-                None => {
-                    connections.insert(
-                        connection.ip(),
-                        vec![TuiResponse {
+        Message::ConnectionReceived(connection) => {
+            if let Some(connection) = connection {
+                match connections.get_mut(&connection.ip()) {
+                    Some(existing_connection) => {
+                        existing_connection.push(TuiResponse {
                             addr: connection,
-                            http_response: ResponseContent {
-                                content: None,
-                                format: ResponseFormat::None.to_string(),
-                            },
+                            status: Some(Status::Ok),
+                            method: None,
+                            content: Some("Established Connection".to_string()),
+                            format: None,
                             time: Utc::now().to_rfc3339(),
-                        }]
-                    );
+                        });
+                    }
+                    None => {
+                        connections.insert(
+                            connection.ip(),
+                            vec![TuiResponse {
+                                status: Some(Status::Ok),
+                                method: None,
+                                addr: connection,
+                                content: Some("Established connection".to_string()),
+                                format: None,
+                                time: Utc::now().to_rfc3339(),
+                            }],
+                        );
+                    }
                 }
             }
         }
