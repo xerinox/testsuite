@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use crossterm::cursor::MoveTo;
 use crossterm::style::PrintStyledContent;
-use crossterm::QueueableCommand;
 use crossterm::style::StyledContent;
+use crossterm::QueueableCommand;
 
 use crate::tui::{style::StyleVariants, Rect, TuiResponse};
 use std::net::IpAddr;
@@ -39,7 +39,13 @@ impl ListableItem for IpAddr {
 #[async_trait]
 /// Trait for defining an UIElement as a list
 pub trait UiList<'a, T: ListableItem>: UiElement {
-    fn new(&self, items: Arc<Mutex<Vec<T>>>, bounds: Rect, current: bool, selected_item: usize) -> Self;
+    fn new(
+        &self,
+        items: Arc<Mutex<Vec<T>>>,
+        bounds: Rect,
+        current: bool,
+        selected_item: usize,
+    ) -> Self;
     async fn print(&self) -> Vec<StyledContent<String>>;
     fn bounds(&self) -> &Rect;
     fn get_selected_index(&self) -> usize;
@@ -48,7 +54,7 @@ pub trait UiList<'a, T: ListableItem>: UiElement {
 #[derive(Debug)]
 pub struct AddressList<T>
 where
-    T: ListableItem + Send + Sync
+    T: ListableItem + Send + Sync,
 {
     bounds: Rect,
     list: Arc<Mutex<Vec<T>>>,
@@ -58,7 +64,13 @@ where
 
 #[async_trait]
 impl<'a, T: ListableItem + Send + Sync> UiList<'a, T> for AddressList<T> {
-    fn new(&self, items: Arc<Mutex<Vec<T>>>, bounds: Rect, current: bool, selected_item: usize) -> Self {
+    fn new(
+        &self,
+        items: Arc<Mutex<Vec<T>>>,
+        bounds: Rect,
+        current: bool,
+        selected_item: usize,
+    ) -> Self {
         AddressList {
             bounds,
             list: items,
@@ -71,18 +83,18 @@ impl<'a, T: ListableItem + Send + Sync> UiList<'a, T> for AddressList<T> {
     }
 
     async fn print(&self) -> Vec<StyledContent<String>> {
-        self.list.lock().await
+        self.list
+            .lock()
+            .await
             .iter()
             .enumerate()
             .take(UiList::bounds(self).height())
-            .map(
-                |(index, address)| {
-                    address.print(
-                        index == self.get_selected_index(),
-                        UiList::bounds(self).width(),
-                    )
-                } 
-            )
+            .map(|(index, address)| {
+                address.print(
+                    index == self.get_selected_index(),
+                    UiList::bounds(self).width(),
+                )
+            })
             .collect()
     }
     fn bounds(&self) -> &Rect {
@@ -96,16 +108,18 @@ pub trait UiElement {
     fn is_current(&self) -> bool;
     async fn render(self, out: Out) -> anyhow::Result<()>;
     fn get_header(&self, current: bool) -> StyledContent<String>;
-    fn get_next_line(&self, counter: u16) -> MoveTo{
-        let bounds = self.bounds();
-        let cols:u16 = bounds.cols.0 as u16;
-        let rows:u16 = bounds.rows.0 as u16;
-        MoveTo(cols, rows+counter)
+    fn get_next_line(&self, counter: usize) -> Option<MoveTo> {
+        let next_line = self.bounds().rows.0 + counter;
+        if next_line < self.bounds().rows.1 {
+            Some(MoveTo(self.bounds().cols.0 as u16, next_line as u16))
+        } else {
+            None
+        }
     }
 }
 
 #[async_trait]
-impl<T: ListableItem + Sync + Send > UiElement for AddressList<T> {
+impl<T: ListableItem + Sync + Send> UiElement for AddressList<T> {
     fn is_current(&self) -> bool {
         self.current
     }
@@ -117,11 +131,15 @@ impl<T: ListableItem + Sync + Send > UiElement for AddressList<T> {
     async fn render(self, out: Out) -> anyhow::Result<()> {
         let buffer: Vec<StyledContent<String>> = UiList::print(&self).await;
         let mut out = out.lock().await;
-        out.queue(self.get_next_line(0))?;
-        out.queue(PrintStyledContent(self.get_header(self.is_current())))?;
-        for (line, content) in buffer.into_iter().enumerate() {
-            out.queue(self.get_next_line(line as u16 + 1))?;
-            out.queue(PrintStyledContent(content))?;
+        if let Some(next_line) = self.get_next_line(0) {
+            out.queue(next_line)?;
+            out.queue(PrintStyledContent(self.get_header(self.is_current())))?;
+            for (line, content) in buffer.into_iter().enumerate() {
+                if let Some(next_line) = self.get_next_line(line + 1) {
+                    out.queue(next_line)?;
+                    out.queue(PrintStyledContent(content))?;
+                }
+            }
         }
         Ok(())
     }
@@ -135,7 +153,12 @@ impl<T: ListableItem + Sync + Send > UiElement for AddressList<T> {
 }
 
 impl<T: ListableItem + Send + Sync + Clone> AddressList<T> {
-    pub fn default(bounds: Rect, list: Arc<Mutex<Vec<T>>>, current: bool, selected_item: usize) -> Self {
+    pub fn default(
+        bounds: Rect,
+        list: Arc<Mutex<Vec<T>>>,
+        current: bool,
+        selected_item: usize,
+    ) -> Self {
         AddressList {
             list,
             current,
@@ -188,7 +211,13 @@ pub struct ConnectionsList<T: ListableItem + Sync + Send> {
 
 #[async_trait]
 impl<'a, T: ListableItem + Send + Sync> UiList<'a, T> for ConnectionsList<T> {
-    fn new(&self, items: Arc<Mutex<Vec<T>>>, bounds: Rect, current: bool, selected_item: usize) -> Self {
+    fn new(
+        &self,
+        items: Arc<Mutex<Vec<T>>>,
+        bounds: Rect,
+        current: bool,
+        selected_item: usize,
+    ) -> Self {
         ConnectionsList {
             bounds,
             list: items,
@@ -204,7 +233,8 @@ impl<'a, T: ListableItem + Send + Sync> UiList<'a, T> for ConnectionsList<T> {
     }
     async fn print(&self) -> Vec<StyledContent<String>> {
         let list = Arc::clone(&self.list);
-        self.create_member_list(list, self.get_selected_index()).await
+        self.create_member_list(list, self.get_selected_index())
+            .await
     }
 }
 
@@ -220,13 +250,16 @@ impl<T: ListableItem + Send + Sync> UiElement for ConnectionsList<T> {
     async fn render(self, out: Out) -> anyhow::Result<()> {
         let buffer = self.print().await;
         let mut out = out.lock().await;
-        out.queue(self.get_next_line(0))?;
-        out.queue(PrintStyledContent(self.get_header(self.is_current())))?;
-        for (line, content) in buffer.into_iter().enumerate() {
-            out.queue(self.get_next_line(line as u16 + 1))?;
-            out.queue(PrintStyledContent(content))?;
+        if let Some(next_line) = self.get_next_line(0) {
+            out.queue(next_line)?;
+            out.queue(PrintStyledContent(self.get_header(self.is_current())))?;
+            for (line, content) in buffer.into_iter().enumerate() {
+                if let Some(next_line) = self.get_next_line(line + 1) {
+                    out.queue(next_line)?;
+                    out.queue(PrintStyledContent(content))?;
+                }
+            }
         }
-
         Ok(())
     }
     fn get_header(&self, current: bool) -> StyledContent<String> {
@@ -246,17 +279,22 @@ impl<T: ListableItem + std::marker::Sync + std::marker::Send> ConnectionsList<T>
         groups: Arc<Mutex<Vec<T>>>,
         selectedgroup: usize,
     ) -> Vec<StyledContent<String>> {
-        groups.lock().await
+        groups
+            .lock()
+            .await
             .iter()
             .enumerate()
             .take(UiElement::bounds(self).height())
-            .map(|(index, item)| {
-                item.print(selectedgroup == index, UiList::bounds(self).width())
-            })
+            .map(|(index, item)| item.print(selectedgroup == index, UiList::bounds(self).width()))
             .collect()
     }
 
-    pub fn default(list: Arc<Mutex<Vec<T>>>, bounds: Rect, current: bool, selected_item: usize) -> Self {
+    pub fn default(
+        list: Arc<Mutex<Vec<T>>>,
+        bounds: Rect,
+        current: bool,
+        selected_item: usize,
+    ) -> Self {
         ConnectionsList {
             list,
             bounds,
@@ -272,27 +310,27 @@ pub struct ProgramHeader<'a> {
 
 #[async_trait]
 impl UiElement for ProgramHeader<'_> {
-    fn bounds(&self) ->  &Rect {
+    fn bounds(&self) -> &Rect {
         self.bounds
-        
     }
-    async fn render(self, out: Out) -> anyhow::Result<()>{
+    async fn render(self, out: Out) -> anyhow::Result<()> {
         let mut out = out.lock().await;
-        
+
         out.queue(MoveTo(0, 0))?;
         out.queue(PrintStyledContent(self.get_header(false)))?;
         Ok(())
     }
     fn is_current(&self) -> bool {
         false
-        
     }
-    fn get_header(&self,_current:bool) -> StyledContent<String> {
+    fn get_header(&self, _current: bool) -> StyledContent<String> {
         let width = self.bounds().width();
         StyleVariants::get_styled_item(format!("{:^width$}", "Testsuite"), StyleVariants::Title)
-        
     }
-    fn get_next_line(&self,_counter:u16) -> MoveTo {
-        MoveTo(0,0)
+    fn get_next_line(&self, _counter: usize) -> Option<MoveTo> {
+        Some(MoveTo(0, 0))
+    }
+}
+
     }
 }
